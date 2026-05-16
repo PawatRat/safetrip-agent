@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .model_provider import build_model
+from .model_provider import build_agent_models
 from .schemas import AgentTrace, CaseState
 from .subagents.completeness_agent import (
     COMPLETENESS_AGENT_PROMPT,
@@ -52,6 +52,7 @@ class SafeTripOrchestrator:
     submission_output_root: Path = Path("police_submission_packets")
     case_state: CaseState = field(default_factory=CaseState, init=False)
     model: Any | None = field(default=None, init=False)
+    agent_models: dict[str, Any] = field(default_factory=dict, init=False)
     last_traces: list[AgentTrace] = field(default_factory=list, init=False)
     workflow_prompts: tuple[str, ...] = field(
         default=(
@@ -68,7 +69,7 @@ class SafeTripOrchestrator:
 
     def __post_init__(self) -> None:
         if self.use_model:
-            self.model = build_model()
+            self.agent_models = build_agent_models()
         if self.verbose:
             print("SafeTrip workflow initialized with orchestrator-owned state routing.")
 
@@ -188,7 +189,8 @@ class SafeTripOrchestrator:
         return updated
 
     def _run_intake_node(self, state: CaseState, message: str) -> CaseState:
-        if not self.model:
+        model = self._model_for("intake")
+        if not model:
             updated = update_case_from_message(state, message)
             self._record_trace(
                 "Intake Agent",
@@ -199,7 +201,7 @@ class SafeTripOrchestrator:
             return updated
 
         conversation = [*state.messages, message]
-        extracted_facts = extract_case_facts_with_model(self.model, conversation, message)
+        extracted_facts = extract_case_facts_with_model(model, conversation, message)
         updated = update_case_from_message(state, message, extracted_facts)
         self._record_trace(
             "Intake Agent",
@@ -210,10 +212,11 @@ class SafeTripOrchestrator:
         return updated
 
     def _run_evidence_node(self, state: CaseState, message: str) -> CaseState:
-        if not self.model:
+        model = self._model_for("evidence")
+        if not model:
             updated = update_case_evidence(state, message)
         else:
-            updated = update_case_evidence_with_model(self.model, state, message)
+            updated = update_case_evidence_with_model(model, state, message)
         self._record_trace(
             "Evidence Agent",
             "Compare tourist-provided details against evidence requirements from the tool.",
@@ -226,10 +229,11 @@ class SafeTripOrchestrator:
         return updated
 
     def _run_guidance_node(self, state: CaseState, mode: str) -> CaseState:
-        if not self.model:
+        model = self._model_for("guidance")
+        if not model:
             updated = update_case_guidance(state, mode)
         else:
-            updated = update_case_guidance_with_model(self.model, state, mode)
+            updated = update_case_guidance_with_model(model, state, mode)
         self._record_trace(
             "Guidance Agent",
             f"Prepare guidance in {mode} mode using current case data.",
@@ -245,10 +249,11 @@ class SafeTripOrchestrator:
         return updated
 
     def _run_completeness_node(self, state: CaseState) -> CaseState:
-        if not self.model:
+        model = self._model_for("completeness")
+        if not model:
             updated = update_case_completeness(state)
         else:
-            updated = update_case_completeness_with_model(self.model, state)
+            updated = update_case_completeness_with_model(model, state)
         self._record_trace(
             "Completeness Agent",
             "Assess whether the case has enough facts and evidence to draft.",
@@ -262,14 +267,19 @@ class SafeTripOrchestrator:
         return updated
 
     def _run_drafting_node(self, state: CaseState) -> str:
-        if not self.model:
+        model = self._model_for("drafting")
+        if not model:
             return draft_report(state)
-        return draft_report_with_model(self.model, state)
+        return draft_report_with_model(model, state)
 
     def _run_safety_node(self, state: CaseState, response_text: str) -> tuple[CaseState, str]:
-        if not self.model:
+        model = self._model_for("safety")
+        if not model:
             return review_case_safety(state, response_text)
-        return review_case_safety_with_model(self.model, state, response_text)
+        return review_case_safety_with_model(model, state, response_text)
+
+    def _model_for(self, agent_name: str):
+        return self.agent_models.get(agent_name) or self.model
 
     def _run_submission_flow(
         self,

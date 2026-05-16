@@ -25,8 +25,10 @@ from safetrip_agent.schemas import (
 
 
 class FakeExtractionModel:
-    def __init__(self, responses: dict[type, list[object]]) -> None:
+    def __init__(self, responses: dict[type, list[object]], name: str = "shared") -> None:
         self.responses = responses
+        self.name = name
+        self.calls: list[type] = []
         self.schema: type | None = None
 
     def with_structured_output(self, schema):
@@ -35,6 +37,7 @@ class FakeExtractionModel:
 
     def invoke(self, _messages):
         assert self.schema is not None
+        self.calls.append(self.schema)
         return self.responses[self.schema].pop(0)
 
 
@@ -269,6 +272,93 @@ class Phase3WorkflowTests(unittest.TestCase):
                     "Safety Agent",
                 ],
             )
+
+    def test_orchestrator_uses_agent_specific_models(self) -> None:
+        agent_models = {
+            "intake": FakeExtractionModel(
+                {
+                    CaseFactExtraction: [
+                        CaseFactExtraction(
+                            scam_type="fake_accommodation",
+                            scam_type_confidence=0.9,
+                            rationale="Accommodation scam facts are present.",
+                            location="Phuket",
+                            incident_time="today",
+                            amount_lost="12000 THB",
+                        )
+                    ]
+                },
+                name="intake",
+            ),
+            "evidence": FakeExtractionModel(
+                {
+                    EvidenceExtraction: [
+                        EvidenceExtraction(
+                            evidence_names=[
+                                "property_listing_url",
+                                "payment_record",
+                                "booking_reference",
+                            ]
+                        )
+                    ]
+                },
+                name="evidence",
+            ),
+            "completeness": FakeExtractionModel(
+                {
+                    CompletenessAssessment: [
+                        CompletenessAssessment(report_ready=True, missing_items=[])
+                    ]
+                },
+                name="completeness",
+            ),
+            "guidance": FakeExtractionModel(
+                {
+                    GuidanceSelection: [
+                        GuidanceSelection(
+                            route="Use Tourist Police support with accommodation evidence.",
+                            source_ids=["seed:tourist-police-trust-portal"],
+                        )
+                    ]
+                },
+                name="guidance",
+            ),
+            "drafting": FakeExtractionModel(
+                {
+                    DraftingResult: [
+                        DraftingResult(
+                            response_text="Case draft for tourist confirmation\n\nPlease confirm."
+                        )
+                    ]
+                },
+                name="drafting",
+            ),
+            "safety": FakeExtractionModel(
+                {
+                    SafetyAssessment: [
+                        SafetyAssessment(
+                            response_text="Case draft for tourist confirmation\n\nPlease confirm."
+                        )
+                    ]
+                },
+                name="safety",
+            ),
+        }
+        orchestrator = SafeTripOrchestrator(use_model=False)
+        orchestrator.agent_models = agent_models
+
+        result = orchestrator.process(
+            "I booked a villa in Phuket today and transferred 12000 THB. "
+            "I have the listing, payment record, and booking reference."
+        )
+
+        self.assertEqual(result.case_state.workflow_stage, "awaiting_user_confirmation")
+        self.assertEqual(agent_models["intake"].calls, [CaseFactExtraction])
+        self.assertEqual(agent_models["evidence"].calls, [EvidenceExtraction])
+        self.assertEqual(agent_models["completeness"].calls, [CompletenessAssessment])
+        self.assertEqual(agent_models["guidance"].calls, [GuidanceSelection])
+        self.assertEqual(agent_models["drafting"].calls, [DraftingResult])
+        self.assertEqual(agent_models["safety"].calls, [SafetyAssessment])
 
 
 if __name__ == "__main__":
