@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from safetrip_agent.schemas import (
     CaseFactExtraction,
     CaseState,
     CompletenessAssessment,
+    DraftingResult,
     EvidenceExtraction,
     GuidanceSelection,
     SafetyAssessment,
@@ -158,6 +160,115 @@ class Phase3WorkflowTests(unittest.TestCase):
         self.assertTrue(result.case_state.report_ready)
         self.assertIn("Case draft for tourist confirmation", result.final_text)
         self.assertIn("Please confirm whether this draft is accurate", result.final_text)
+
+    def test_complete_case_drafts_then_confirmation_writes_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            orchestrator = SafeTripOrchestrator(
+                use_model=False,
+                submission_output_root=Path(tmpdir) / "police_packets",
+            )
+            orchestrator.model = FakeExtractionModel(
+                {
+                    CaseFactExtraction: [
+                        CaseFactExtraction(
+                            scam_type="fake_accommodation",
+                            scam_type_confidence=0.9,
+                            rationale="Accommodation scam facts are present.",
+                            location="Phuket",
+                            incident_time="today",
+                            amount_lost="12000 THB",
+                        ),
+                    ],
+                    EvidenceExtraction: [
+                        EvidenceExtraction(
+                            evidence_names=[
+                                "property_listing_url",
+                                "payment_record",
+                                "booking_reference",
+                            ]
+                        ),
+                    ],
+                    CompletenessAssessment: [
+                        CompletenessAssessment(
+                            report_ready=True,
+                            missing_items=[],
+                            next_question=None,
+                        ),
+                    ],
+                    GuidanceSelection: [
+                        GuidanceSelection(
+                            route="Use Tourist Police support with accommodation evidence.",
+                            source_ids=["seed:tourist-police-trust-portal"],
+                        ),
+                    ],
+                    DraftingResult: [
+                        DraftingResult(
+                            response_text=(
+                                "Case draft for tourist confirmation\n\n"
+                                "The tourist reports a fake accommodation case in Phuket today.\n\n"
+                                "Please confirm whether this draft is accurate."
+                            )
+                        ),
+                    ],
+                    SafetyAssessment: [
+                        SafetyAssessment(
+                            response_text=(
+                                "Case draft for tourist confirmation\n\n"
+                                "The tourist reports a fake accommodation case in Phuket today.\n\n"
+                                "Please confirm whether this draft is accurate."
+                            )
+                        ),
+                        SafetyAssessment(
+                            response_text="Police submission packet prepared.",
+                        ),
+                    ],
+                }
+            )
+
+            draft_result = orchestrator.process(
+                "I booked a villa in Phuket today and transferred 12000 THB. "
+                "I have the listing, payment record, and booking reference."
+            )
+
+            self.assertEqual(
+                draft_result.raw_result["workflow_steps"],
+                [
+                    "Intake Agent",
+                    "Evidence Agent",
+                    "Completeness Agent",
+                    "Orchestrator Decision",
+                    "Guidance Agent",
+                    "Drafting Agent",
+                    "Safety Agent",
+                ],
+            )
+            self.assertEqual(
+                draft_result.case_state.workflow_stage,
+                "awaiting_user_confirmation",
+            )
+            self.assertIn("Please confirm", draft_result.final_text)
+            self.assertTrue(draft_result.raw_result["agent_traces"])
+
+            confirmation_result = orchestrator.process("confirm")
+
+            packet_path = Path(confirmation_result.case_state.submission_packet_path)
+            self.assertTrue(packet_path.exists())
+            packet_text = packet_path.read_text(encoding="utf-8")
+            self.assertIn("# SafeTrip Police Submission Packet", packet_text)
+            self.assertIn("## Confirmed Draft", packet_text)
+            self.assertIn("not proof that a formal police report was submitted", packet_text)
+            self.assertEqual(
+                confirmation_result.case_state.workflow_stage,
+                "submission_packet_written",
+            )
+            self.assertEqual(
+                confirmation_result.raw_result["workflow_steps"],
+                [
+                    "Orchestrator Decision",
+                    "Submission Packet Agent",
+                    "Safety Agent",
+                ],
+            )
 
 
 if __name__ == "__main__":

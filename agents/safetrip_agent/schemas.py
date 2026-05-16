@@ -19,6 +19,14 @@ ScamType = Literal[
     "unknown",
 ]
 
+WorkflowStage = Literal[
+    "collecting_info",
+    "ready_to_draft",
+    "awaiting_user_confirmation",
+    "confirmed_for_submission",
+    "submission_packet_written",
+]
+
 
 class EvidenceRequirement(BaseModel):
     name: str
@@ -72,6 +80,13 @@ class SafetyAssessment(BaseModel):
     response_text: str
 
 
+class AgentTrace(BaseModel):
+    agent_name: str
+    thought: str = ""
+    collected_data: dict = Field(default_factory=dict)
+    decision: str = ""
+
+
 class CaseFact(BaseModel):
     name: str
     value: str
@@ -113,9 +128,12 @@ class CaseState(BaseModel):
     missing_items: list[str] = Field(default_factory=list)
     next_question: str | None = None
     report_ready: bool = False
+    workflow_stage: WorkflowStage = "collecting_info"
     reporting_guidance: ReportingGuidance | None = None
     safety_review: SafetyReview = Field(default_factory=SafetyReview)
     user_confirmed_submission: bool = False
+    draft_text: str | None = None
+    submission_packet_path: str | None = None
     messages: list[str] = Field(default_factory=list)
 
     @property

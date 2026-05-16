@@ -32,15 +32,25 @@ def retrieve_reporting_guidance(scam_type: ScamType) -> dict:
     }
 
 
-def update_case_guidance(state: CaseState) -> CaseState:
+def update_case_guidance(state: CaseState, mode: str = "intake_help") -> CaseState:
     """Offline guidance node used only when the orchestrator is run without a model."""
     updated = state.model_copy(deep=True)
     guidance = retrieve_reporting_guidance.invoke({"scam_type": updated.scam_type})
-    updated.reporting_guidance = ReportingGuidance.model_validate(guidance)
+    route = guidance["route"]
+    if mode == "intake_help" and updated.next_question:
+        route = f"{route} Next, collect: {updated.next_question}"
+    updated.reporting_guidance = ReportingGuidance(
+        route=route,
+        source_ids=guidance["source_ids"],
+    )
     return updated
 
 
-def update_case_guidance_with_model(model: Any, state: CaseState) -> CaseState:
+def update_case_guidance_with_model(
+    model: Any,
+    state: CaseState,
+    mode: str = "intake_help",
+) -> CaseState:
     """Guidance node: use the LLM to select tourist-facing guidance from tool context."""
     updated = state.model_copy(deep=True)
     seed_guidance = retrieve_reporting_guidance.invoke({"scam_type": updated.scam_type})
@@ -51,10 +61,13 @@ def update_case_guidance_with_model(model: Any, state: CaseState) -> CaseState:
                 "system",
                 "You are the SafeTrip Guidance Agent. Use the retrieved guidance as "
                 "source context, then produce a concise reporting route for the "
-                "tourist. Do not claim that any report was submitted.",
+                "tourist. In intake_help mode, focus on what to collect next. In "
+                "report_route mode, use all information to prepare reporting route "
+                "guidance. Do not claim that any report was submitted.",
             ),
             (
                 "human",
+                f"Guidance mode: {mode}\n\n"
                 "Retrieved guidance tool result:\n"
                 f"{seed_guidance}\n\n"
                 "Case state:\n"
