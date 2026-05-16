@@ -1,0 +1,2 @@
+"""SafeTrip AI agent package."""
+

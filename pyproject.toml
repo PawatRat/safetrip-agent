@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "safetrip-ai"
+version = "0.2.0"
+description = "SafeTrip AI tourist scam intake workflow prototype."
+requires-python = ">=3.11"
+dependencies = [
+    "langchain",
+    "langchain-google-genai",
+    "langchain-openai",
+    "pydantic",
+]
+
+[project.scripts]
+safetrip-ai = "safetrip_agent.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "agents"}
+
+[tool.setuptools.packages.find]
+where = ["agents"]
