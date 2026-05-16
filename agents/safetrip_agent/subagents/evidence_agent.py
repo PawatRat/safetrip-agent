@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from langchain.tools import tool
 
 from ..evidence_rules import SCAM_EVIDENCE_RULES
-from ..schemas import CaseState, EvidenceItem, EvidenceRequirement, ScamType
+from ..schemas import CaseState, EvidenceExtraction, EvidenceItem, EvidenceRequirement, ScamType
 
 
 EVIDENCE_AGENT_PROMPT = (
@@ -25,9 +26,12 @@ def get_requirements(scam_type: ScamType) -> list[EvidenceRequirement]:
 
 
 def update_case_evidence(state: CaseState, message: str) -> CaseState:
-    """Evidence node: attach requirements and infer evidence mentioned by user."""
+    """Offline evidence node used only when the orchestrator is run without a model."""
     updated = state.model_copy(deep=True)
-    updated.evidence_requirements = get_requirements(updated.scam_type)
+    updated.evidence_requirements = [
+        EvidenceRequirement.model_validate(item)
+        for item in get_evidence_requirements.invoke({"scam_type": updated.scam_type})
+    ]
 
     for evidence_name in infer_evidence_names(message, updated.scam_type):
         if evidence_name not in updated.known_evidence_names:
@@ -37,6 +41,48 @@ def update_case_evidence(state: CaseState, message: str) -> CaseState:
                     description=f"Tourist mentioned {evidence_name.replace('_', ' ')}.",
                 )
             )
+
+    return updated
+
+
+def update_case_evidence_with_model(model: Any, state: CaseState, message: str) -> CaseState:
+    """Evidence node: use the LLM to identify evidence, with rule data only as tool context."""
+    updated = state.model_copy(deep=True)
+    requirements = [
+        EvidenceRequirement.model_validate(item)
+        for item in get_evidence_requirements.invoke({"scam_type": updated.scam_type})
+    ]
+    updated.evidence_requirements = requirements
+
+    allowed_names = [requirement.name for requirement in requirements]
+    structured_model = model.with_structured_output(EvidenceExtraction)
+    extraction = structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Evidence Agent. Decide which required or "
+                "recommended evidence items the tourist has already provided or "
+                "clearly described. Use only evidence_names from the allowed list. "
+                "Do not require exact wording; infer from natural language.",
+            ),
+            (
+                "human",
+                "Allowed evidence requirements:\n"
+                f"{[item.model_dump() for item in requirements]}\n\n"
+                "Known evidence already attached:\n"
+                f"{updated.known_evidence_names}\n\n"
+                "Conversation:\n"
+                f"{format_transcript(updated.messages)}\n\n"
+                f"Latest tourist message:\n{message}",
+            ),
+        ]
+    )
+
+    allowed = set(allowed_names)
+    for evidence_name in extraction.evidence_names:
+        if evidence_name not in allowed:
+            continue
+        add_evidence_once(updated, evidence_name, "Tourist described this evidence.")
 
     return updated
 
@@ -85,6 +131,16 @@ def contains_keyword(text: str, keyword: str) -> bool:
     if " " in keyword:
         return re.search(rf"(?<!\w){escaped}(?!\w)", text) is not None
     return re.search(rf"\b{escaped}\b", text) is not None
+
+
+def add_evidence_once(state: CaseState, evidence_name: str, description: str) -> None:
+    if evidence_name in state.known_evidence_names:
+        return
+    state.evidence.append(EvidenceItem(name=evidence_name, description=description))
+
+
+def format_transcript(messages: list[str]) -> str:
+    return "\n".join(f"Tourist: {message}" for message in messages)
 
 
 EVIDENCE_AGENT_TOOLS = [get_evidence_requirements]

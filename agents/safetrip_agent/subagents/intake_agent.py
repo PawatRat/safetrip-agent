@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from langchain.tools import tool
 
-from ..schemas import CaseFact, CaseState, ClassificationResult, ScamType
+from ..schemas import CaseFact, CaseFactExtraction, CaseState, ClassificationResult, ScamType
 
 
 INTAKE_AGENT_PROMPT = (
@@ -80,34 +81,74 @@ def classify_message(message: str) -> ClassificationResult:
     )
 
 
-def update_case_from_message(state: CaseState, message: str) -> CaseState:
+def extract_case_facts_with_model(
+    model: Any,
+    conversation: list[str],
+    latest_message: str,
+) -> CaseFactExtraction:
+    """Use the configured chat model to extract structured case facts."""
+    structured_model = model.with_structured_output(CaseFactExtraction)
+    transcript = "\n".join(f"Tourist: {item}" for item in conversation)
+    return structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Intake Agent. Extract only facts that the tourist "
+                "has already provided. Preserve user wording for location and time. "
+                "Do not invent missing details. Return strict structured output.",
+            ),
+            (
+                "human",
+                "Conversation so far:\n"
+                f"{transcript}\n\n"
+                f"Latest tourist message:\n{latest_message}",
+            ),
+        ]
+    )
+
+
+def update_case_from_message(
+    state: CaseState,
+    message: str,
+    extracted_facts: CaseFactExtraction | None = None,
+) -> CaseState:
     """Intake node: append message and extract stable first-pass case facts."""
     updated = state.model_copy(deep=True)
     updated.messages.append(message)
     updated.language = updated.language or detect_language(message)
 
-    classification = classify_message("\n".join(updated.messages))
-    if classification.confidence >= updated.classification_confidence:
-        updated.scam_type = classification.scam_type
-        updated.classification_confidence = classification.confidence
-        updated.classification_rationale = classification.rationale
+    facts = extracted_facts or fallback_extract_case_facts(message, updated.messages)
+    if facts.scam_type_confidence >= updated.classification_confidence:
+        updated.scam_type = facts.scam_type
+        updated.classification_confidence = facts.scam_type_confidence
+        updated.classification_rationale = facts.rationale
 
-    amount = extract_amount(message)
-    if amount and not updated.amount_lost:
-        updated.amount_lost = amount
-        add_fact_once(updated, "amount_lost", amount)
+    if facts.amount_lost and not updated.amount_lost:
+        updated.amount_lost = facts.amount_lost
+        add_fact_once(updated, "amount_lost", facts.amount_lost)
 
-    location = extract_location(message)
-    if location and not updated.location:
-        updated.location = location
-        add_fact_once(updated, "location", location)
+    if facts.location and not updated.location:
+        updated.location = facts.location
+        add_fact_once(updated, "location", facts.location)
 
-    incident_time = extract_incident_time(message)
-    if incident_time and not updated.incident_time:
-        updated.incident_time = incident_time
-        add_fact_once(updated, "incident_time", incident_time)
+    if facts.incident_time and not updated.incident_time:
+        updated.incident_time = facts.incident_time
+        add_fact_once(updated, "incident_time", facts.incident_time)
 
     return updated
+
+
+def fallback_extract_case_facts(message: str, conversation: list[str]) -> CaseFactExtraction:
+    """Offline development fallback used when no live model is configured."""
+    classification = classify_message("\n".join(conversation))
+    return CaseFactExtraction(
+        scam_type=classification.scam_type,
+        scam_type_confidence=classification.confidence,
+        rationale=classification.rationale,
+        location=extract_location(message),
+        incident_time=extract_incident_time(message),
+        amount_lost=extract_amount(message),
+    )
 
 
 def detect_language(message: str) -> str:

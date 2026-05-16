@@ -33,6 +33,45 @@ class ClassificationResult(BaseModel):
     matched_signals: list[str] = Field(default_factory=list)
 
 
+class CaseFactExtraction(BaseModel):
+    scam_type: ScamType = "unknown"
+    scam_type_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = ""
+    location: str | None = None
+    incident_time: str | None = None
+    amount_lost: str | None = None
+    evidence_names: list[str] = Field(default_factory=list)
+
+
+class EvidenceExtraction(BaseModel):
+    evidence_names: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+class CompletenessAssessment(BaseModel):
+    report_ready: bool = False
+    missing_items: list[str] = Field(default_factory=list)
+    next_question: str | None = None
+    rationale: str = ""
+
+
+class GuidanceSelection(BaseModel):
+    route: str
+    source_ids: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class DraftingResult(BaseModel):
+    response_text: str
+
+
+class SafetyAssessment(BaseModel):
+    blocked: bool = False
+    flags: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    response_text: str
+
+
 class CaseFact(BaseModel):
     name: str
     value: str

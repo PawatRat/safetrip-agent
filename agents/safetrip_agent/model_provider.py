@@ -34,4 +34,3 @@ def build_model():
         )
 
     raise ValueError("Unsupported SAFETRIP_MODEL_PROVIDER. Use 'openai' or 'gemini'.")
-

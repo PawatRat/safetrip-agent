@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from typing import Any
+
 from langchain.tools import tool
 
-from ..schemas import CaseState, ReportingGuidance, ScamType
+from ..schemas import CaseState, GuidanceSelection, ReportingGuidance, ScamType
 
 
 GUIDANCE_AGENT_PROMPT = (
@@ -31,10 +33,39 @@ def retrieve_reporting_guidance(scam_type: ScamType) -> dict:
 
 
 def update_case_guidance(state: CaseState) -> CaseState:
-    """Guidance node: attach source-linked reporting route."""
+    """Offline guidance node used only when the orchestrator is run without a model."""
     updated = state.model_copy(deep=True)
     guidance = retrieve_reporting_guidance.invoke({"scam_type": updated.scam_type})
     updated.reporting_guidance = ReportingGuidance.model_validate(guidance)
+    return updated
+
+
+def update_case_guidance_with_model(model: Any, state: CaseState) -> CaseState:
+    """Guidance node: use the LLM to select tourist-facing guidance from tool context."""
+    updated = state.model_copy(deep=True)
+    seed_guidance = retrieve_reporting_guidance.invoke({"scam_type": updated.scam_type})
+    structured_model = model.with_structured_output(GuidanceSelection)
+    guidance = structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Guidance Agent. Use the retrieved guidance as "
+                "source context, then produce a concise reporting route for the "
+                "tourist. Do not claim that any report was submitted.",
+            ),
+            (
+                "human",
+                "Retrieved guidance tool result:\n"
+                f"{seed_guidance}\n\n"
+                "Case state:\n"
+                f"{updated.model_dump(mode='json')}",
+            ),
+        ]
+    )
+    updated.reporting_guidance = ReportingGuidance(
+        route=guidance.route,
+        source_ids=guidance.source_ids or seed_guidance.get("source_ids", []),
+    )
     return updated
 
 

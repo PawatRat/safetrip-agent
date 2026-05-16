@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from ..schemas import CaseState
+from typing import Any
+
+from ..schemas import CaseState, DraftingResult
 
 DRAFTING_AGENT_PROMPT = (
     "Drafting Agent: produce a neutral Thai/English police-ready report draft "
@@ -10,7 +12,7 @@ DRAFTING_AGENT_PROMPT = (
 
 
 def draft_report(state: CaseState) -> str:
-    """Drafting node: only produce report text after deterministic readiness gate."""
+    """Offline drafting node used only when the orchestrator is run without a model."""
     if not state.report_ready:
         return state.next_question or "Please provide the missing case details first."
 
@@ -39,6 +41,31 @@ def draft_report(state: CaseState) -> str:
         f"Source IDs: {source_ids}\n\n"
         "Please confirm whether this draft is accurate or tell me what to correct."
     )
+
+
+def draft_report_with_model(model: Any, state: CaseState) -> str:
+    """Drafting node: use the LLM to write a neutral tourist-confirmation draft."""
+    if not state.report_ready:
+        return state.next_question or "Please provide the missing case details first."
+
+    structured_model = model.with_structured_output(DraftingResult)
+    result = structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Drafting Agent. Produce a neutral, police-ready "
+                "draft for tourist confirmation. Use cautious wording such as 'the "
+                "tourist reports'. Do not state that anything has been submitted. "
+                "Ask the tourist to confirm or correct the draft.",
+            ),
+            (
+                "human",
+                "Case state:\n"
+                f"{state.model_dump(mode='json')}",
+            ),
+        ]
+    )
+    return result.response_text
 
 
 DRAFTING_AGENT_TOOLS = []

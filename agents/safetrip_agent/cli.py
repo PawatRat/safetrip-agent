@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
         help="Show orchestrator/tool progress while the agent runs.",
     )
     parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run without live model extraction.",
+    )
+    parser.add_argument(
         "--env-file",
         default=".env",
         help="Load environment variables from this file before starting.",
@@ -84,7 +89,10 @@ def main() -> int:
     load_env_file(args.env_file)
 
     try:
-        orchestrator = SafeTripOrchestrator(verbose=args.verbose)
+        orchestrator = SafeTripOrchestrator(
+            verbose=args.verbose,
+            use_model=not args.offline,
+        )
     except Exception as exc:
         print(f"Startup error: {format_runtime_error(exc)}", file=sys.stderr)
         return 1
@@ -104,4 +112,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

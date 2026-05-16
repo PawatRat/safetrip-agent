@@ -1,28 +1,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
+from .model_provider import build_model
 from .schemas import CaseState
 from .subagents.completeness_agent import (
     COMPLETENESS_AGENT_PROMPT,
     update_case_completeness,
+    update_case_completeness_with_model,
 )
 from .subagents.drafting_agent import DRAFTING_AGENT_PROMPT
-from .subagents.drafting_agent import draft_report
+from .subagents.drafting_agent import draft_report, draft_report_with_model
 from .subagents.evidence_agent import (
     EVIDENCE_AGENT_PROMPT,
     update_case_evidence,
+    update_case_evidence_with_model,
 )
 from .subagents.guidance_agent import (
     GUIDANCE_AGENT_PROMPT,
     update_case_guidance,
+    update_case_guidance_with_model,
 )
 from .subagents.intake_agent import (
     INTAKE_AGENT_PROMPT,
+    extract_case_facts_with_model,
     update_case_from_message,
 )
 from .subagents.safety_agent import SAFETY_AGENT_PROMPT
-from .subagents.safety_agent import review_case_safety
+from .subagents.safety_agent import review_case_safety, review_case_safety_with_model
 
 
 @dataclass
@@ -37,7 +43,9 @@ class SafeTripOrchestrator:
     """Coordinates explicit SafeTrip workflow nodes and preserves case state."""
 
     verbose: bool = False
+    use_model: bool = True
     case_state: CaseState = field(default_factory=CaseState, init=False)
+    model: Any | None = field(default=None, init=False)
     workflow_prompts: tuple[str, ...] = field(
         default=(
             INTAKE_AGENT_PROMPT,
@@ -51,6 +59,8 @@ class SafeTripOrchestrator:
     )
 
     def __post_init__(self) -> None:
+        if self.use_model:
+            self.model = build_model()
         if self.verbose:
             print("SafeTrip workflow initialized with explicit Phase 3 nodes.")
 
@@ -66,32 +76,32 @@ class SafeTripOrchestrator:
 
         state = self._run_node(
             "Intake Agent",
-            lambda current: update_case_from_message(current, message),
+            lambda current: self._run_intake_node(current, message),
             state,
             workflow_steps,
         )
         state = self._run_node(
             "Evidence Agent",
-            lambda current: update_case_evidence(current, message),
+            lambda current: self._run_evidence_node(current, message),
             state,
             workflow_steps,
         )
         state = self._run_node(
             "Guidance Agent",
-            update_case_guidance,
+            self._run_guidance_node,
             state,
             workflow_steps,
         )
         state = self._run_node(
             "Completeness Agent",
-            update_case_completeness,
+            self._run_completeness_node,
             state,
             workflow_steps,
         )
 
         if state.report_ready:
             workflow_steps.append("Drafting Agent")
-            response_text = draft_report(state)
+            response_text = self._run_drafting_node(state)
             if self.verbose:
                 print("  - Drafting Agent produced confirmation draft")
         else:
@@ -100,7 +110,7 @@ class SafeTripOrchestrator:
                 print("  - Drafting Agent skipped until required fields are complete")
 
         workflow_steps.append("Safety Agent")
-        state, response_text = review_case_safety(state, response_text)
+        state, response_text = self._run_safety_node(state, response_text)
         if self.verbose:
             print("  - Safety Agent reviewed tourist-facing response")
 
@@ -120,6 +130,39 @@ class SafeTripOrchestrator:
         if self.verbose:
             print(f"  - {name} updated case state")
         return updated
+
+    def _run_intake_node(self, state: CaseState, message: str) -> CaseState:
+        if not self.model:
+            return update_case_from_message(state, message)
+
+        conversation = [*state.messages, message]
+        extracted_facts = extract_case_facts_with_model(self.model, conversation, message)
+        return update_case_from_message(state, message, extracted_facts)
+
+    def _run_evidence_node(self, state: CaseState, message: str) -> CaseState:
+        if not self.model:
+            return update_case_evidence(state, message)
+        return update_case_evidence_with_model(self.model, state, message)
+
+    def _run_guidance_node(self, state: CaseState) -> CaseState:
+        if not self.model:
+            return update_case_guidance(state)
+        return update_case_guidance_with_model(self.model, state)
+
+    def _run_completeness_node(self, state: CaseState) -> CaseState:
+        if not self.model:
+            return update_case_completeness(state)
+        return update_case_completeness_with_model(self.model, state)
+
+    def _run_drafting_node(self, state: CaseState) -> str:
+        if not self.model:
+            return draft_report(state)
+        return draft_report_with_model(self.model, state)
+
+    def _run_safety_node(self, state: CaseState, response_text: str) -> tuple[CaseState, str]:
+        if not self.model:
+            return review_case_safety(state, response_text)
+        return review_case_safety_with_model(self.model, state, response_text)
 
 
 def build_intake_response(state: CaseState) -> str:

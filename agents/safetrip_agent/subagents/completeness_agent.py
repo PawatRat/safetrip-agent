@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 from langchain.tools import tool
 
 from ..evidence_rules import SCAM_EVIDENCE_RULES
-from ..schemas import CaseState, IntakeState
+from ..schemas import CaseState, CompletenessAssessment, IntakeState
+from .evidence_agent import get_evidence_requirements
 
 
 COMPLETENESS_AGENT_PROMPT = (
@@ -45,7 +48,7 @@ def completeness_check(state: dict) -> dict:
 
 
 def update_case_completeness(state: CaseState) -> CaseState:
-    """Completeness node: deterministic report-readiness gate."""
+    """Offline completeness node used only when the orchestrator is run without a model."""
     updated = state.model_copy(deep=True)
     requirements = SCAM_EVIDENCE_RULES.get(updated.scam_type, [])
     required_names = {r.name for r in requirements if r.required_level == "required"}
@@ -63,6 +66,42 @@ def update_case_completeness(state: CaseState) -> CaseState:
     updated.missing_items = base_missing + missing
     updated.report_ready = not updated.missing_items and updated.scam_type != "unknown"
     updated.next_question = build_next_question(updated.missing_items)
+    return updated
+
+
+def update_case_completeness_with_model(model: Any, state: CaseState) -> CaseState:
+    """Completeness node: use the LLM to decide missing fields and the next question."""
+    updated = state.model_copy(deep=True)
+    requirements = get_evidence_requirements.invoke({"scam_type": updated.scam_type})
+    structured_model = model.with_structured_output(CompletenessAssessment)
+    assessment = structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Completeness Agent. Decide if the case has "
+                "enough information for a draft. Accept approximate, misspelled, "
+                "or partial user answers when they clearly answer a missing field. "
+                "Ask for only one next missing item. Do not repeat a question that "
+                "the tourist has already answered in substance.",
+            ),
+            (
+                "human",
+                "Required base fields: scam_type, incident_location, incident_time.\n"
+                "Evidence requirements from tool:\n"
+                f"{requirements}\n\n"
+                "Current case state:\n"
+                f"{updated.model_dump(mode='json')}\n\n"
+                "Return missing_items using these names where applicable: "
+                "scam_type, incident_location, incident_time, or evidence requirement names.",
+            ),
+        ]
+    )
+
+    updated.missing_items = assessment.missing_items
+    updated.report_ready = assessment.report_ready and updated.scam_type != "unknown"
+    updated.next_question = assessment.next_question
+    if updated.missing_items and not updated.next_question:
+        updated.next_question = build_next_question(updated.missing_items)
     return updated
 
 

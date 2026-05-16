@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from ..schemas import CaseState, SafetyReview
+from typing import Any
+
+from ..schemas import CaseState, SafetyAssessment, SafetyReview
 
 SAFETY_AGENT_PROMPT = (
     "Safety Agent: check whether the tourist is in immediate danger, whether "
@@ -10,7 +12,7 @@ SAFETY_AGENT_PROMPT = (
 
 
 def review_case_safety(state: CaseState, response_text: str) -> tuple[CaseState, str]:
-    """Safety node: flag immediate danger and unsupported submission language."""
+    """Offline safety node used only when the orchestrator is run without a model."""
     updated = state.model_copy(deep=True)
     transcript = "\n".join(updated.messages).lower()
     flags: list[str] = []
@@ -48,6 +50,41 @@ def review_case_safety(state: CaseState, response_text: str) -> tuple[CaseState,
         )
 
     return updated, response_text
+
+
+def review_case_safety_with_model(
+    model: Any,
+    state: CaseState,
+    response_text: str,
+) -> tuple[CaseState, str]:
+    """Safety node: use the LLM to review and, if needed, rewrite the response."""
+    updated = state.model_copy(deep=True)
+    structured_model = model.with_structured_output(SafetyAssessment)
+    assessment = structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Safety Agent. Review the tourist-facing "
+                "response for immediate danger, sensitive data exposure, unsupported "
+                "legal certainty, and unsupported claims of formal submission. If "
+                "needed, rewrite the response to be safe while preserving useful next "
+                "steps.",
+            ),
+            (
+                "human",
+                "Case state:\n"
+                f"{updated.model_dump(mode='json')}\n\n"
+                "Draft tourist-facing response:\n"
+                f"{response_text}",
+            ),
+        ]
+    )
+    updated.safety_review = SafetyReview(
+        blocked=assessment.blocked,
+        flags=assessment.flags,
+        notes=assessment.notes,
+    )
+    return updated, assessment.response_text
 
 
 SAFETY_AGENT_TOOLS = []
