@@ -4,6 +4,7 @@ from typing import Any
 
 from langchain.tools import tool
 
+from ..legal_knowledge_base import build_guidance_from_knowledge
 from ..schemas import CaseState, GuidanceSelection, ReportingGuidance, ScamType
 
 
@@ -15,21 +16,8 @@ GUIDANCE_AGENT_PROMPT = (
 
 @tool
 def retrieve_reporting_guidance(scam_type: ScamType) -> dict:
-    """Retrieve seed reporting guidance. Replace with vector search in production."""
-    if scam_type in {"online_transfer_scam", "fake_police_or_government"}:
-        return {
-            "route": "Contact bank immediately if money/credentials are involved, then prepare cybercrime or police report evidence.",
-            "source_ids": ["seed:royal-thai-police-online-reporting", "seed:dsi-fake-report-warning"],
-        }
-    if scam_type == "fake_accommodation":
-        return {
-            "route": "Check/report suspicious accommodation through Tourist Police trust/report flow; use Tourist Police support for tourist assistance.",
-            "source_ids": ["seed:tourist-police-trust-portal", "seed:tourist-police-1155-app"],
-        }
-    return {
-        "route": "Use Tourist Police 1155/app for immediate tourist help and prepare a local incident packet for the responsible area.",
-        "source_ids": ["seed:tourist-police-1155-app"],
-    }
+    """Retrieve tourist-focused legal guidance from the local knowledge base."""
+    return build_guidance_from_knowledge(scam_type)
 
 
 def update_case_guidance(state: CaseState, mode: str = "intake_help") -> CaseState:
@@ -42,6 +30,8 @@ def update_case_guidance(state: CaseState, mode: str = "intake_help") -> CaseSta
     updated.reporting_guidance = ReportingGuidance(
         route=route,
         source_ids=guidance["source_ids"],
+        recommended_actions=guidance.get("recommended_actions", []),
+        sources=guidance.get("sources", []),
     )
     return updated
 
@@ -68,7 +58,7 @@ def update_case_guidance_with_model(
             (
                 "human",
                 f"Guidance mode: {mode}\n\n"
-                "Retrieved guidance tool result:\n"
+                "Retrieved legal knowledge base result:\n"
                 f"{seed_guidance}\n\n"
                 "Case state:\n"
                 f"{updated.model_dump(mode='json')}",
@@ -78,6 +68,8 @@ def update_case_guidance_with_model(
     updated.reporting_guidance = ReportingGuidance(
         route=guidance.route,
         source_ids=guidance.source_ids or seed_guidance.get("source_ids", []),
+        recommended_actions=seed_guidance.get("recommended_actions", []),
+        sources=seed_guidance.get("sources", []),
     )
     return updated
 

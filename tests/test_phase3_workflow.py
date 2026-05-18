@@ -50,6 +50,13 @@ class Phase3WorkflowTests(unittest.TestCase):
         self.assertEqual(result.scam_type, "fake_police_or_government")
         self.assertGreater(result.confidence, 0.7)
 
+    def test_intake_classifies_theft_and_physical_assault(self) -> None:
+        theft = classify_message("My phone was stolen by a pickpocket near the market")
+        assault = classify_message("I was attacked and punched outside a bar")
+
+        self.assertEqual(theft.scam_type, "theft")
+        self.assertEqual(assault.scam_type, "physical_assault")
+
     def test_case_state_collects_facts_and_evidence(self) -> None:
         state = CaseState()
         message = (
@@ -164,11 +171,46 @@ class Phase3WorkflowTests(unittest.TestCase):
         self.assertIn("Case draft for tourist confirmation", result.final_text)
         self.assertIn("Please confirm whether this draft is accurate", result.final_text)
 
+    def test_theft_and_physical_assault_can_reach_drafting(self) -> None:
+        theft_orchestrator = SafeTripOrchestrator(use_model=False)
+        theft_result = theft_orchestrator.process(
+            "My phone was stolen in Bangkok today. I have the item value, theft "
+            "location time, witness details, receipt, and tracking info."
+        )
+
+        self.assertEqual(theft_result.case_state.scam_type, "theft")
+        self.assertTrue(theft_result.case_state.report_ready)
+        self.assertEqual(theft_result.case_state.workflow_stage, "awaiting_user_confirmation")
+
+        assault_orchestrator = SafeTripOrchestrator(use_model=False)
+        assault_result = assault_orchestrator.process(
+            "I was attacked in Pattaya today. I have the assault location time, "
+            "injury medical record, attacker description, witness video, and CCTV."
+        )
+
+        self.assertEqual(assault_result.case_state.scam_type, "physical_assault")
+        self.assertTrue(assault_result.case_state.report_ready)
+        self.assertEqual(assault_result.case_state.workflow_stage, "awaiting_user_confirmation")
+
     def test_complete_case_drafts_then_confirmation_writes_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            posts = []
+
+            def fake_post(endpoint: str, payload: dict) -> dict:
+                posts.append({"endpoint": endpoint, "payload": payload})
+                return {
+                    "reply": "case created",
+                    "incident_type": payload["incident_type"],
+                    "severity": payload["severity"],
+                    "should_create_case": True,
+                    "required_info": payload["required_info"],
+                }
+
             orchestrator = SafeTripOrchestrator(
                 use_model=False,
                 submission_output_root=Path(tmpdir) / "police_packets",
+                police_submission_endpoint="https://example.test/api/mockchat",
+                police_http_post=fake_post,
             )
             orchestrator.model = FakeExtractionModel(
                 {
@@ -201,7 +243,7 @@ class Phase3WorkflowTests(unittest.TestCase):
                     GuidanceSelection: [
                         GuidanceSelection(
                             route="Use Tourist Police support with accommodation evidence.",
-                            source_ids=["seed:tourist-police-trust-portal"],
+                            source_ids=["tourist-police-trust"],
                         ),
                     ],
                     DraftingResult: [
@@ -218,7 +260,9 @@ class Phase3WorkflowTests(unittest.TestCase):
                             response_text=(
                                 "Case draft for tourist confirmation\n\n"
                                 "The tourist reports a fake accommodation case in Phuket today.\n\n"
-                                "Please confirm whether this draft is accurate."
+                                "Please confirm whether this draft is accurate.\n\n"
+                                "Recommendation:\n"
+                                "Use Tourist Police support with accommodation evidence."
                             )
                         ),
                         SafetyAssessment(
@@ -250,6 +294,11 @@ class Phase3WorkflowTests(unittest.TestCase):
                 "awaiting_user_confirmation",
             )
             self.assertIn("Please confirm", draft_result.final_text)
+            self.assertIn("Recommendation:", draft_result.final_text)
+            self.assertIn(
+                "Use Tourist Police support with accommodation evidence.",
+                draft_result.final_text,
+            )
             self.assertTrue(draft_result.raw_result["agent_traces"])
 
             confirmation_result = orchestrator.process("confirm")
@@ -259,7 +308,30 @@ class Phase3WorkflowTests(unittest.TestCase):
             packet_text = packet_path.read_text(encoding="utf-8")
             self.assertIn("# SafeTrip Police Submission Packet", packet_text)
             self.assertIn("## Confirmed Draft", packet_text)
-            self.assertIn("not proof that a formal police report was submitted", packet_text)
+            self.assertIn("SafeTrip mock police handoff endpoint", packet_text)
+            self.assertEqual(len(posts), 1)
+            self.assertEqual(posts[0]["endpoint"], "https://example.test/api/mockchat")
+            self.assertEqual(
+                set(posts[0]["payload"]),
+                {
+                    "reply",
+                    "incident_type",
+                    "severity",
+                    "should_create_case",
+                    "required_info",
+                },
+            )
+            self.assertEqual(posts[0]["payload"]["incident_type"], "fake_accommodation")
+            self.assertEqual(posts[0]["payload"]["severity"], "medium")
+            self.assertTrue(posts[0]["payload"]["should_create_case"])
+            self.assertEqual(
+                posts[0]["payload"]["required_info"],
+                ["location", "contact", "time", "evidence"],
+            )
+            self.assertEqual(
+                confirmation_result.case_state.submission_api_response["reply"],
+                "case created",
+            )
             self.assertEqual(
                 confirmation_result.case_state.workflow_stage,
                 "submission_packet_written",
@@ -272,6 +344,28 @@ class Phase3WorkflowTests(unittest.TestCase):
                     "Safety Agent",
                 ],
             )
+
+    def test_submission_endpoint_error_is_non_fatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            def failing_post(_endpoint: str, _payload: dict) -> dict:
+                raise RuntimeError("mock endpoint rejected payload")
+
+            orchestrator = SafeTripOrchestrator(
+                use_model=False,
+                submission_output_root=Path(tmpdir) / "police_packets",
+                police_submission_endpoint="https://example.test/api/mockchat",
+                police_http_post=failing_post,
+            )
+            orchestrator.case_state.workflow_stage = "awaiting_user_confirmation"
+            orchestrator.case_state.draft_text = "Confirmed draft."
+            orchestrator.case_state.scam_type = "restaurant_or_venue_overcharge"
+
+            result = orchestrator.process("yes")
+
+            self.assertEqual(result.case_state.workflow_stage, "submission_packet_written")
+            self.assertTrue(Path(result.case_state.submission_packet_path).exists())
+            self.assertIn("error", result.case_state.submission_api_response)
+            self.assertIn("packet is saved locally", result.final_text.lower())
 
     def test_orchestrator_uses_agent_specific_models(self) -> None:
         agent_models = {

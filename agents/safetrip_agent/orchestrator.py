@@ -31,7 +31,10 @@ from .subagents.intake_agent import (
 from .subagents.safety_agent import SAFETY_AGENT_PROMPT
 from .subagents.safety_agent import review_case_safety, review_case_safety_with_model
 from .subagents.submission_packet_agent import (
+    DEFAULT_POLICE_SUBMISSION_ENDPOINT,
+    HttpPost,
     SUBMISSION_PACKET_AGENT_PROMPT,
+    submit_case_to_police_endpoint,
     write_submission_packet,
 )
 
@@ -50,6 +53,8 @@ class SafeTripOrchestrator:
     verbose: bool = False
     use_model: bool = True
     submission_output_root: Path = Path("police_submission_packets")
+    police_submission_endpoint: str = DEFAULT_POLICE_SUBMISSION_ENDPOINT
+    police_http_post: HttpPost | None = None
     case_state: CaseState = field(default_factory=CaseState, init=False)
     model: Any | None = field(default=None, init=False)
     agent_models: dict[str, Any] = field(default_factory=dict, init=False)
@@ -120,6 +125,7 @@ class SafeTripOrchestrator:
             )
             workflow_steps.append("Drafting Agent")
             response_text = self._run_drafting_node(state)
+            response_text = attach_guidance_to_response(response_text, state)
             state.draft_text = response_text
             state.workflow_stage = "awaiting_user_confirmation"
             self._record_trace(
@@ -139,6 +145,7 @@ class SafeTripOrchestrator:
                 workflow_steps,
             )
             response_text = build_intake_response(state)
+            response_text = attach_guidance_to_response(response_text, state)
             self._record_trace(
                 "Drafting Agent",
                 "Case is not complete, so drafting is skipped.",
@@ -150,6 +157,7 @@ class SafeTripOrchestrator:
 
         workflow_steps.append("Safety Agent")
         state, response_text = self._run_safety_node(state, response_text)
+        response_text = attach_guidance_to_response(response_text, state)
         self._record_trace(
             "Safety Agent",
             "Review tourist-facing response for unsafe claims and urgent danger signals.",
@@ -304,18 +312,44 @@ class SafeTripOrchestrator:
         workflow_steps.append("Submission Packet Agent")
         packet_root = self._submission_root_path()
         updated, packet_path = write_submission_packet(updated, packet_root)
+        api_error = None
+        try:
+            updated, api_response = submit_case_to_police_endpoint(
+                updated,
+                self.police_submission_endpoint,
+                self.police_http_post,
+            )
+        except Exception as exc:
+            api_response = {}
+            api_error = f"{exc.__class__.__name__}: {exc}"
+            updated.submission_api_endpoint = self.police_submission_endpoint
+            updated.submission_api_response = {"error": api_error}
         self._record_trace(
             "Submission Packet Agent",
-            "Create a structured markdown handoff packet after explicit confirmation.",
-            {"packet_path": str(packet_path)},
-            "Police submission packet written locally.",
+            "Create a structured markdown handoff packet and POST the confirmed case.",
+            {
+                "packet_path": str(packet_path),
+                "endpoint": self.police_submission_endpoint,
+                "api_response": api_response,
+                "api_error": api_error,
+            },
+            "Police submission packet written locally; endpoint submission attempted.",
         )
-        response_text = (
-            "Police submission packet prepared.\n"
-            f"Packet path: {packet_path}\n"
-            "This file is ready for handoff, but it has not been electronically submitted "
-            "to any police system."
-        )
+        if api_error:
+            response_text = (
+                "Police submission packet prepared, but the online handoff endpoint "
+                "returned an error.\n"
+                f"Packet path: {packet_path}\n"
+                f"Endpoint: {self.police_submission_endpoint}\n"
+                f"Error: {api_error}\n"
+                "The packet is saved locally and can still be handed to police or retried."
+            )
+        else:
+            response_text = (
+                "Police submission packet prepared and sent to SafeTrip mock endpoint.\n"
+                f"Packet path: {packet_path}\n"
+                f"Endpoint: {self.police_submission_endpoint}"
+            )
         workflow_steps.append("Safety Agent")
         updated, response_text = self._run_safety_node(updated, response_text)
         self._record_trace(
@@ -410,6 +444,35 @@ def build_intake_response(state: CaseState) -> str:
     if state.next_question:
         lines.append(f"Next question: {state.next_question}")
     return "\n".join(lines)
+
+
+def attach_guidance_to_response(response_text: str, state: CaseState) -> str:
+    if not state.reporting_guidance:
+        return response_text
+
+    parts = [response_text.rstrip()]
+    if state.reporting_guidance.route and state.reporting_guidance.route not in response_text:
+        parts.append("\nRecommendation:")
+        parts.append(state.reporting_guidance.route)
+
+    actions = [
+        action
+        for action in state.reporting_guidance.recommended_actions[:3]
+        if action not in response_text
+    ]
+    if actions:
+        parts.append("\nSuggested next steps:")
+        parts.extend(f"- {action}" for action in actions)
+
+    source_labels = [
+        source.get("title") or source.get("id")
+        for source in state.reporting_guidance.sources[:3]
+        if source.get("title") or source.get("id")
+    ]
+    if source_labels and "Source basis:" not in response_text:
+        parts.append("\nSource basis: " + ", ".join(source_labels))
+
+    return "\n".join(parts)
 
 
 def intake_trace_data(state: CaseState) -> dict:

@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+from urllib import request
 
 from ..schemas import CaseState
+
+DEFAULT_POLICE_SUBMISSION_ENDPOINT = (
+    "https://safetripai-func-ejb8gjaffehxfmhn.southeastasia-01.azurewebsites.net"
+    "/api/mockchat"
+)
+
+HttpPost = Callable[[str, dict], dict]
 
 
 SUBMISSION_PACKET_AGENT_PROMPT = (
     "Submission Packet Agent: after explicit tourist confirmation, prepare a "
-    "structured markdown packet for police handoff. Do not claim API submission."
+    "structured markdown packet and submit the confirmed case to the configured "
+    "police handoff endpoint."
 )
 
 
@@ -22,6 +33,70 @@ def write_submission_packet(state: CaseState, output_root: Path) -> tuple[CaseSt
     updated.submission_packet_path = str(packet_path)
     updated.workflow_stage = "submission_packet_written"
     return updated, packet_path
+
+
+def submit_case_to_police_endpoint(
+    state: CaseState,
+    endpoint: str = DEFAULT_POLICE_SUBMISSION_ENDPOINT,
+    http_post: HttpPost | None = None,
+) -> tuple[CaseState, dict]:
+    """Submit confirmed case payload to the configured police handoff endpoint."""
+    payload = build_police_submission_payload(state)
+    post = http_post or post_json
+    response = post(endpoint, payload)
+    updated = state.model_copy(deep=True)
+    updated.submission_api_endpoint = endpoint
+    updated.submission_api_response = response
+    return updated, response
+
+
+def build_police_submission_payload(state: CaseState) -> dict:
+    return {
+        "reply": state.draft_text or build_case_reply(state),
+        "incident_type": incident_type_for_api(state),
+        "severity": severity_for_case(state),
+        "should_create_case": True,
+        "required_info": ["location", "contact", "time", "evidence"],
+    }
+
+
+def post_json(endpoint: str, payload: dict) -> dict:
+    data = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        endpoint,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(req, timeout=30) as response:
+        body = response.read().decode("utf-8")
+    if not body:
+        return {}
+    return json.loads(body)
+
+
+def build_case_reply(state: CaseState) -> str:
+    return (
+        f"SafeTrip case {state.case_id}: {state.scam_type}. "
+        f"Location: {state.location or 'not specified'}. "
+        f"Time: {state.incident_time or 'not specified'}. "
+        f"Amount: {state.amount_lost or 'not specified'}. "
+        f"Evidence: {', '.join(state.known_evidence_names) or 'none listed'}."
+    )
+
+
+def incident_type_for_api(state: CaseState) -> str:
+    if state.scam_type == "unknown":
+        return "scam"
+    return state.scam_type
+
+
+def severity_for_case(state: CaseState) -> str:
+    if state.scam_type in {"fake_police_or_government", "online_transfer_scam", "physical_assault"}:
+        return "high"
+    if state.amount_lost:
+        return "medium"
+    return "medium"
 
 
 def build_submission_packet_markdown(state: CaseState) -> str:
@@ -41,6 +116,18 @@ def build_submission_packet_markdown(state: CaseState) -> str:
         if state.reporting_guidance
         else "none"
     )
+    legal_sources = "\n".join(
+        f"- {source.get('title', source.get('id', 'source'))}: {source.get('url', '')}"
+        for source in (state.reporting_guidance.sources if state.reporting_guidance else [])
+    ) or "- None listed"
+    recommended_actions = "\n".join(
+        f"- {action}"
+        for action in (
+            state.reporting_guidance.recommended_actions
+            if state.reporting_guidance
+            else []
+        )
+    ) or "- None listed"
 
     return (
         "# SafeTrip Police Submission Packet\n\n"
@@ -66,13 +153,18 @@ def build_submission_packet_markdown(state: CaseState) -> str:
         "## Reporting Guidance\n"
         f"- Route: {state.reporting_guidance.route if state.reporting_guidance else 'not provided'}\n"
         f"- Source IDs: {source_ids}\n\n"
+        "## Recommended Actions\n"
+        f"{recommended_actions}\n\n"
+        "## Legal / Tourist Assistance Sources\n"
+        f"{legal_sources}\n\n"
         "## Confirmed Draft\n"
         f"{state.draft_text or 'No draft text stored.'}\n\n"
         "## Tourist Conversation\n"
         f"{transcript}\n\n"
         "## System Notes\n"
-        "- This file is a prepared handoff packet. It is not proof that a formal "
-        "police report was submitted through an external system.\n"
+        "- This file is a prepared handoff packet. The confirmed case is also posted "
+        "to the configured SafeTrip mock police handoff endpoint when submission "
+        "confirmation is received.\n"
     )
 
 

@@ -27,6 +27,16 @@ def classify_message(message: str) -> ClassificationResult:
 
     signal_groups: list[tuple[ScamType, list[str], str]] = [
         (
+            "physical_assault",
+            ["assault", "attacked", "hit me", "punched", "kicked", "hurt", "injury", "weapon"],
+            "Physical harm or immediate safety signals take priority.",
+        ),
+        (
+            "theft",
+            ["stolen", "theft", "pickpocket", "robbed", "snatched", "bag missing", "phone missing", "wallet missing"],
+            "Theft or missing property terms matched.",
+        ),
+        (
             "fake_police_or_government",
             ["police", "immigration", "dsi", "otp", "remote", "warrant", "government"],
             "Government impersonation and credential-pressure signals take priority.",

@@ -115,6 +115,14 @@ def infer_evidence_names(message: str, scam_type: ScamType) -> list[str]:
         "venue_name_location": ["venue", "restaurant", "bar", "club"],
         "bill_menu_or_receipt_photo": ["bill", "menu", "receipt"],
         "expected_vs_demanded_amount": ["expected", "demanded", "charged"],
+        "item_description_and_value": ["phone", "wallet", "bag", "passport", "camera", "laptop", "value"],
+        "theft_location_and_time": ["stolen", "theft", "pickpocket", "robbed", "snatched", "today", "yesterday"],
+        "suspect_or_witness_details": ["suspect", "witness", "saw", "cctv", "camera"],
+        "photos_receipts_or_tracking_info": ["photo", "receipt", "tracking", "find my", "imei", "serial"],
+        "assault_location_and_time": ["assault", "attacked", "hit", "punched", "kicked", "today", "yesterday"],
+        "injury_description_or_medical_record": ["injury", "hurt", "bleeding", "hospital", "medical", "doctor"],
+        "suspect_description_or_identity": ["suspect", "attacker", "identity", "description", "shirt", "name"],
+        "witnesses_photos_or_video": ["witness", "photo", "video", "cctv", "camera"],
     }
     allowed = {requirement.name for requirement in SCAM_EVIDENCE_RULES.get(scam_type, [])}
     matches = []

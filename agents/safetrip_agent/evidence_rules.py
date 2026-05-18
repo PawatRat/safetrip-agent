@@ -158,6 +158,49 @@ SCAM_EVIDENCE_RULES: dict[ScamType, list[EvidenceRequirement]] = {
             reason="Shows payment made.",
         ),
     ],
+    "theft": [
+        EvidenceRequirement(
+            name="item_description_and_value",
+            required_level="required",
+            reason="Identifies what was stolen and approximate loss.",
+        ),
+        EvidenceRequirement(
+            name="theft_location_and_time",
+            required_level="required",
+            reason="Establishes where and when the theft occurred.",
+        ),
+        EvidenceRequirement(
+            name="suspect_or_witness_details",
+            required_level="strongly_recommended",
+            reason="Supports police follow-up if anyone saw or recorded the incident.",
+        ),
+        EvidenceRequirement(
+            name="photos_receipts_or_tracking_info",
+            required_level="strongly_recommended",
+            reason="Helps identify the stolen item and ownership.",
+        ),
+    ],
+    "physical_assault": [
+        EvidenceRequirement(
+            name="assault_location_and_time",
+            required_level="required",
+            reason="Establishes jurisdiction and incident timeline.",
+        ),
+        EvidenceRequirement(
+            name="injury_description_or_medical_record",
+            required_level="required",
+            reason="Documents harm and supports urgency assessment.",
+        ),
+        EvidenceRequirement(
+            name="suspect_description_or_identity",
+            required_level="strongly_recommended",
+            reason="Helps police identify the reported person.",
+        ),
+        EvidenceRequirement(
+            name="witnesses_photos_or_video",
+            required_level="strongly_recommended",
+            reason="Supports the incident account with third-party or media evidence.",
+        ),
+    ],
     "unknown": [],
 }
-

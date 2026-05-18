@@ -16,6 +16,8 @@ ScamType = Literal[
     "online_transfer_scam",
     "fake_police_or_government",
     "restaurant_or_venue_overcharge",
+    "theft",
+    "physical_assault",
     "unknown",
 ]
 
@@ -111,6 +113,8 @@ class SafetyReview(BaseModel):
 class ReportingGuidance(BaseModel):
     route: str
     source_ids: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+    sources: list[dict] = Field(default_factory=list)
 
 
 class CaseState(BaseModel):
@@ -134,6 +138,8 @@ class CaseState(BaseModel):
     user_confirmed_submission: bool = False
     draft_text: str | None = None
     submission_packet_path: str | None = None
+    submission_api_endpoint: str | None = None
+    submission_api_response: dict | None = None
     messages: list[str] = Field(default_factory=list)
 
     @property
