@@ -64,27 +64,13 @@ button {
 }
 
 .brand-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 2px 10px;
+  padding: 2px 2px 8px;
 }
 
-.brand-mark,
 .avatar,
 .empty-icon {
   display: grid;
   place-items: center;
-}
-
-.brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: #111827;
-  color: #ffffff;
-  font-weight: 760;
-  letter-spacing: 0;
 }
 
 .brand-row h1,
@@ -99,7 +85,6 @@ button {
   line-height: 1.2;
 }
 
-.brand-row p,
 .topbar p,
 .empty-state p {
   margin: 4px 0 0;
@@ -117,6 +102,10 @@ button {
   background: var(--surface);
 }
 
+.runtime-panel {
+  padding: 8px 10px;
+}
+
 .panel-title {
   display: flex;
   align-items: center;
@@ -127,25 +116,18 @@ button {
 }
 
 .runtime-card {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--surface-soft);
-}
-
-.runtime-card p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  display: block;
 }
 
 .status-dot-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   font-size: 13px;
+}
+
+.status-dot-row svg {
+  color: #667085;
 }
 
 .status-dot {
@@ -158,30 +140,6 @@ button {
 .status-dot.live {
   background: #12b76a;
   box-shadow: 0 0 0 4px rgba(18, 183, 106, 0.12);
-}
-
-.segmented-control {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.segmented-control button {
-  height: 34px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.segmented-control button.active {
-  background: #ffffff;
-  color: var(--text);
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
 }
 
 .case-grid {
@@ -212,13 +170,15 @@ button {
 }
 
 .field-text,
-.checklist-body {
+.checklist-body,
+.checklist-head {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.field-label {
+.field-label,
+.checklist-level {
   color: var(--subtle);
   font-size: 10.5px;
   text-transform: uppercase;
@@ -255,23 +215,8 @@ button {
   gap: 2px;
 }
 
-.checklist-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 .checklist-head strong {
-  font-size: 12.5px;
-}
-
-.checklist-level {
-  flex: none;
-  color: var(--subtle);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  font-size: 13px;
 }
 
 .checklist-body p {
@@ -281,20 +226,22 @@ button {
   line-height: 1.4;
 }
 
-.ghost-button {
-  display: flex;
+.topbar-reset {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 42px;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 999px;
   background: #ffffff;
   color: #374151;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 650;
 }
 
-.ghost-button:hover {
+.topbar-reset:hover {
   border-color: var(--line-strong);
   background: #f9fafb;
 }
@@ -728,9 +675,10 @@ button {
 }
 
 .composer textarea {
-  max-height: 160px;
   min-height: 48px;
+  max-height: 180px;
   resize: none;
+  overflow-y: hidden;
   padding: 13px 16px;
   border: 1px solid var(--line-strong);
   border-radius: 18px;

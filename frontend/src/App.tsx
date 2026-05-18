@@ -11,7 +11,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 type RuntimeMode = "live" | "offline";
 
@@ -109,6 +109,7 @@ export default function App() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [isSending, setIsSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const latestCase = useMemo(
     () => [...turns].reverse().find((turn) => turn.caseState)?.caseState,
@@ -138,6 +139,21 @@ export default function App() {
       behavior: "smooth",
     });
   }, [turns, isSending]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+
+    const maxHeight = Number.parseFloat(getComputedStyle(textarea).maxHeight);
+    const nextHeight = Number.isFinite(maxHeight)
+      ? Math.min(textarea.scrollHeight, maxHeight)
+      : textarea.scrollHeight;
+
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
+  }, [input]);
 
   async function sendMessage(message: string) {
     const trimmed = message.trim();
@@ -264,46 +280,22 @@ export default function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-mark">ST</div>
-          <div>
-            <h1>SafeTrip AI</h1>
-            <p>Incident intelligence console</p>
-          </div>
+          <h1>SafeTrip AI</h1>
         </div>
 
-        <section className="panel">
-          <div className="panel-title">
-            <Sparkles size={16} />
-            Runtime
-          </div>
+        <section className="panel runtime-panel" aria-label="Runtime">
           <div className="runtime-card">
             <div className="status-dot-row">
+              <Sparkles size={14} />
               <span
                 className={
                   status?.live_model_available ? "status-dot live" : "status-dot muted"
                 }
               />
               <strong>
-                {mode === "live" ? "Live LLM mode" : "Deterministic fallback"}
+                {runtimeLabel(status)}
               </strong>
             </div>
-            <p>{statusText(status, mode)}</p>
-          </div>
-          <div className="segmented-control" aria-label="Runtime mode">
-            <button
-              className={mode === "live" ? "active" : ""}
-              type="button"
-              onClick={() => setMode("live")}
-            >
-              Live
-            </button>
-            <button
-              className={mode === "offline" ? "active" : ""}
-              type="button"
-              onClick={() => setMode("offline")}
-            >
-              Offline
-            </button>
           </div>
         </section>
 
@@ -311,10 +303,6 @@ export default function App() {
 
         <EvidenceChecklist caseState={latestCase} />
 
-        <button className="ghost-button" type="button" onClick={resetCase}>
-          <RefreshCcw size={16} />
-          Reset case
-        </button>
       </aside>
 
       <section className="workspace">
@@ -323,6 +311,10 @@ export default function App() {
             <h2>Tourist Support Chat</h2>
             <p>Every response includes the agent pipeline used to reach it.</p>
           </div>
+          <button className="topbar-reset" type="button" onClick={resetCase}>
+            <RefreshCcw size={15} />
+            Reset case
+          </button>
         </header>
 
         <div className="conversation" ref={listRef}>
@@ -335,6 +327,7 @@ export default function App() {
 
         <form className="composer" onSubmit={handleSubmit}>
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
@@ -568,12 +561,12 @@ function EvidenceChecklist({ caseState }: { caseState?: CaseState }) {
                 <StatusMark collected={have} />
                 <div className="checklist-body">
                   <div className="checklist-head">
-                    <strong className={have ? "" : "muted"}>
-                      {pretty(req.name) || "Evidence item"}
-                    </strong>
                     <span className="checklist-level">
                       {pretty(req.required_level) || "optional"}
                     </span>
+                    <strong className={have ? "" : "muted"}>
+                      {pretty(req.name) || "Evidence item"}
+                    </strong>
                   </div>
                   {req.reason ? <p>{req.reason}</p> : null}
                 </div>
@@ -645,13 +638,9 @@ function FormattedText({ text }: { text: string }) {
   );
 }
 
-function statusText(status: StatusPayload | null, mode: RuntimeMode) {
-  if (!status) return "Checking model configuration...";
-  if (mode === "offline") return "Uses deterministic local rules for stable demos.";
-  if (status.live_model_available) {
-    return `${status.provider.toUpperCase()} credentials detected. Web chat will call the same LLM path as the terminal.`;
-  }
-  return status.model_hint || "Live model credentials are missing.";
+function runtimeLabel(status: StatusPayload | null) {
+  if (!status) return "Checking API";
+  return status.live_model_available ? "API Detected" : "API Not Detected";
 }
 
 function pretty(value?: string | null) {
