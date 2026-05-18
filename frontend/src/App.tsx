@@ -452,7 +452,7 @@ function PipelinePanel({
           {traces.map((trace, index) => (
             <div className="trace-row" key={`${trace.agent_name ?? "agent"}-${index}`}>
               <div className="trace-marker">
-                <span className="trace-node" />
+                <Bot className="trace-agent-icon" size={14} strokeWidth={2.3} />
               </div>
               <div className="trace-content">
                 <div className="trace-heading">

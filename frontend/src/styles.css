@@ -286,6 +286,7 @@ button {
   flex-direction: column;
   gap: 24px;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 34px max(30px, calc((100vw - 1180px) / 2));
 }
 
@@ -344,6 +345,7 @@ button {
 .turn {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .message {
@@ -351,6 +353,8 @@ button {
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 12px;
   width: min(900px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .message.user {
@@ -366,6 +370,7 @@ button {
 .message.user .bubble {
   grid-column: 1;
   justify-self: end;
+  max-width: min(760px, 100%);
   background: #ffffff;
 }
 
@@ -383,7 +388,7 @@ button {
 }
 
 .bubble {
-  width: fit-content;
+  width: auto;
   max-width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--line);
@@ -407,15 +412,17 @@ button {
 }
 
 .pipeline {
-  width: min(900px, 100%);
+  width: min(900px, calc(100% - 46px));
   margin-left: 46px;
   color: #3f454d;
+  min-width: 0;
 }
 
 .pipeline-summary {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   width: 100%;
   padding: 4px 0 8px;
   border: 0;
@@ -440,9 +447,9 @@ button {
   grid-column: 2;
   color: var(--muted);
   font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .thinking-pulse {
@@ -502,12 +509,14 @@ button {
   margin-top: 1px;
 }
 
-.trace-node {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 4px var(--bg, #ffffff), 0 0 0 5px rgba(15, 118, 110, 0.18);
+.trace-agent-icon {
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--bg, #ffffff);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--bg, #ffffff);
 }
 
 .trace-content {
@@ -517,10 +526,9 @@ button {
 }
 
 .trace-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 14px;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .trace-heading strong {
@@ -535,6 +543,11 @@ button {
   font-size: 12px;
 }
 
+.trace-heading span {
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .trace-content p {
   margin: 0;
   line-height: 1.45;
@@ -547,8 +560,9 @@ button {
   background: transparent;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   line-height: 1.5;
-  white-space: normal;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .thinking-pulse.live {
