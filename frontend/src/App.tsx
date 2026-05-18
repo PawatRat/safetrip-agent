@@ -1,9 +1,12 @@
 import {
   ArrowUp,
   Bot,
+  Check,
   ChevronDown,
   CircleDashed,
+  ClipboardList,
   FileText,
+  Minus,
   RefreshCcw,
   Sparkles,
   UserRound,
@@ -35,6 +38,12 @@ type ReportingGuidance = {
   sources?: GuidanceSource[];
 };
 
+type EvidenceRequirement = {
+  name?: string;
+  required_level?: string;
+  reason?: string;
+};
+
 type CaseState = {
   workflow_stage?: string;
   scam_type?: string;
@@ -43,6 +52,7 @@ type CaseState = {
   incident_time?: string | null;
   amount_lost?: string | null;
   evidence?: EvidenceItem[];
+  evidence_requirements?: EvidenceRequirement[];
   missing_items?: string[];
   next_question?: string | null;
   report_ready?: boolean;
@@ -299,6 +309,8 @@ export default function App() {
 
         <CasePanel caseState={latestCase} />
 
+        <EvidenceChecklist caseState={latestCase} />
+
         <button className="ghost-button" type="button" onClick={resetCase}>
           <RefreshCcw size={16} />
           Reset case
@@ -479,7 +491,6 @@ function PipelinePanel({
 
 function CasePanel({ caseState }: { caseState?: CaseState }) {
   const evidence = caseState?.evidence ?? [];
-  const missing = caseState?.missing_items ?? [];
 
   const hasCase = Boolean(caseState?.workflow_stage);
   const scamType = caseState?.scam_type;
@@ -487,7 +498,6 @@ function CasePanel({ caseState }: { caseState?: CaseState }) {
   const location = caseState?.location;
   const incidentTime = caseState?.incident_time;
   const hasEvidence = evidence.length > 0;
-  const hasMissing = missing.length > 0;
 
   return (
     <section className="panel">
@@ -499,22 +509,22 @@ function CasePanel({ caseState }: { caseState?: CaseState }) {
         <Field
           label="Stage"
           value={hasCase ? pretty(caseState?.workflow_stage) : "No active case"}
-          tone={hasCase ? "ok" : "pending"}
+          collected={hasCase}
         />
         <Field
           label="Type"
           value={typeKnown ? pretty(scamType) : "Not identified yet"}
-          tone={typeKnown ? "ok" : "pending"}
+          collected={typeKnown}
         />
         <Field
           label="Location"
           value={location || "Not collected yet"}
-          tone={location ? "ok" : "pending"}
+          collected={Boolean(location)}
         />
         <Field
           label="Time"
           value={incidentTime || "Not collected yet"}
-          tone={incidentTime ? "ok" : "pending"}
+          collected={Boolean(incidentTime)}
         />
         <Field
           label="Evidence"
@@ -523,36 +533,83 @@ function CasePanel({ caseState }: { caseState?: CaseState }) {
               ? evidence.map((item) => pretty(item.name)).join(", ")
               : "Not collected yet"
           }
-          tone={hasEvidence ? "ok" : "pending"}
-        />
-        <Field
-          label="Still needed"
-          value={hasMissing ? missing.map(pretty).join(", ") : "All required info collected"}
-          tone={hasMissing ? "attention" : "ok"}
+          collected={hasEvidence}
         />
       </div>
     </section>
   );
 }
 
-type FieldTone = "ok" | "pending" | "attention";
+function EvidenceChecklist({ caseState }: { caseState?: CaseState }) {
+  const requirements = caseState?.evidence_requirements ?? [];
+  const collected = new Set(
+    (caseState?.evidence ?? [])
+      .map((item) => item.name)
+      .filter((name): name is string => Boolean(name)),
+  );
+
+  return (
+    <section className="panel">
+      <div className="panel-title">
+        <ClipboardList size={16} />
+        Evidence for this case
+      </div>
+      {requirements.length === 0 ? (
+        <p className="checklist-empty">
+          Once the case is classified, the evidence this specific case needs
+          will appear here.
+        </p>
+      ) : (
+        <ul className="checklist">
+          {requirements.map((req, index) => {
+            const have = req.name ? collected.has(req.name) : false;
+            return (
+              <li className="checklist-item" key={`${req.name ?? "req"}-${index}`}>
+                <StatusMark collected={have} />
+                <div className="checklist-body">
+                  <div className="checklist-head">
+                    <strong className={have ? "" : "muted"}>
+                      {pretty(req.name) || "Evidence item"}
+                    </strong>
+                    <span className="checklist-level">
+                      {pretty(req.required_level) || "optional"}
+                    </span>
+                  </div>
+                  {req.reason ? <p>{req.reason}</p> : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function StatusMark({ collected }: { collected: boolean }) {
+  return (
+    <span className={collected ? "status-mark on" : "status-mark"}>
+      {collected ? <Check size={13} strokeWidth={2.5} /> : <Minus size={13} />}
+    </span>
+  );
+}
 
 function Field({
   label,
   value,
-  tone = "ok",
+  collected,
 }: {
   label: string;
   value: string;
-  tone?: FieldTone;
+  collected: boolean;
 }) {
   return (
-    <div className={`field field-${tone}`}>
-      <span className="field-label">
-        <span className="field-dot" />
-        {label}
-      </span>
-      <strong>{value}</strong>
+    <div className="field">
+      <StatusMark collected={collected} />
+      <div className="field-text">
+        <span className="field-label">{label}</span>
+        <strong className={collected ? "" : "muted"}>{value}</strong>
+      </div>
     </div>
   );
 }
