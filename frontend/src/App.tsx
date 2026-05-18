@@ -447,7 +447,7 @@ function PipelinePanel({
           {traces.map((trace, index) => (
             <div className="trace-row" key={`${trace.agent_name ?? "agent"}-${index}`}>
               <div className="trace-marker">
-                <span>{index + 1}</span>
+                <span className="trace-node" />
               </div>
               <div className="trace-content">
                 <div className="trace-heading">
@@ -465,11 +465,9 @@ function PipelinePanel({
                 <span className="trace-spinner" />
               </div>
               <div className="trace-content">
-                <div className="trace-heading">
-                  <strong>{pretty(liveAgent)}</strong>
-                  <span>working…</span>
-                </div>
-                <p>{pretty(liveAgent)} is analyzing the case right now.</p>
+                <span className="trace-live-label">
+                  {pretty(liveAgent)} is working…
+                </span>
               </div>
             </div>
           ) : null}
@@ -483,6 +481,14 @@ function CasePanel({ caseState }: { caseState?: CaseState }) {
   const evidence = caseState?.evidence ?? [];
   const missing = caseState?.missing_items ?? [];
 
+  const hasCase = Boolean(caseState?.workflow_stage);
+  const scamType = caseState?.scam_type;
+  const typeKnown = Boolean(scamType && scamType !== "unknown");
+  const location = caseState?.location;
+  const incidentTime = caseState?.incident_time;
+  const hasEvidence = evidence.length > 0;
+  const hasMissing = missing.length > 0;
+
   return (
     <section className="panel">
       <div className="panel-title">
@@ -490,21 +496,62 @@ function CasePanel({ caseState }: { caseState?: CaseState }) {
         Active case
       </div>
       <div className="case-grid">
-        <Field label="Stage" value={pretty(caseState?.workflow_stage) || "No active case"} />
-        <Field label="Type" value={pretty(caseState?.scam_type) || "Unknown"} />
-        <Field label="Location" value={caseState?.location || "Not collected"} />
-        <Field label="Time" value={caseState?.incident_time || "Not collected"} />
-        <Field label="Evidence" value={evidence.length ? evidence.map((item) => pretty(item.name)).join(", ") : "None yet"} />
-        <Field label="Missing" value={missing.length ? missing.map(pretty).join(", ") : "None"} />
+        <Field
+          label="Stage"
+          value={hasCase ? pretty(caseState?.workflow_stage) : "No active case"}
+          tone={hasCase ? "ok" : "pending"}
+        />
+        <Field
+          label="Type"
+          value={typeKnown ? pretty(scamType) : "Not identified yet"}
+          tone={typeKnown ? "ok" : "pending"}
+        />
+        <Field
+          label="Location"
+          value={location || "Not collected yet"}
+          tone={location ? "ok" : "pending"}
+        />
+        <Field
+          label="Time"
+          value={incidentTime || "Not collected yet"}
+          tone={incidentTime ? "ok" : "pending"}
+        />
+        <Field
+          label="Evidence"
+          value={
+            hasEvidence
+              ? evidence.map((item) => pretty(item.name)).join(", ")
+              : "Not collected yet"
+          }
+          tone={hasEvidence ? "ok" : "pending"}
+        />
+        <Field
+          label="Still needed"
+          value={hasMissing ? missing.map(pretty).join(", ") : "All required info collected"}
+          tone={hasMissing ? "attention" : "ok"}
+        />
       </div>
     </section>
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+type FieldTone = "ok" | "pending" | "attention";
+
+function Field({
+  label,
+  value,
+  tone = "ok",
+}: {
+  label: string;
+  value: string;
+  tone?: FieldTone;
+}) {
   return (
-    <div className="field">
-      <span>{label}</span>
+    <div className={`field field-${tone}`}>
+      <span className="field-label">
+        <span className="field-dot" />
+        {label}
+      </span>
       <strong>{value}</strong>
     </div>
   );

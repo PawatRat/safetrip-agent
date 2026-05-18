@@ -183,13 +183,29 @@ button {
 
 .field {
   display: grid;
-  gap: 3px;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
 }
 
-.field span {
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--subtle);
   font-size: 11px;
   text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.field-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #cbd5e1;
 }
 
 .field strong {
@@ -197,6 +213,47 @@ button {
   font-size: 13px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+/* Collected */
+.field-ok {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.field-ok .field-dot {
+  background: #10b981;
+}
+
+/* Not collected yet */
+.field-pending {
+  border-style: dashed;
+  border-color: rgba(217, 119, 6, 0.45);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.field-pending .field-dot {
+  background: #d97706;
+}
+
+.field-pending strong {
+  color: #b45309;
+  font-style: italic;
+  font-weight: 600;
+}
+
+/* Still missing required info */
+.field-attention {
+  border-color: rgba(220, 38, 38, 0.4);
+  background: rgba(239, 68, 68, 0.07);
+}
+
+.field-attention .field-dot {
+  background: #dc2626;
+}
+
+.field-attention strong {
+  color: #b91c1c;
 }
 
 .ghost-button {
@@ -435,23 +492,50 @@ button {
 }
 
 .trace-row {
+  position: relative;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   gap: 12px;
   padding: 0;
 }
 
+/* Vertical connector line that links the step nodes */
+.trace-row::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  width: 2px;
+  top: 0;
+  bottom: -13px;
+  transform: translateX(-1px);
+  background: var(--line);
+  z-index: 0;
+}
+
+.trace-row:first-child::before {
+  top: 11px;
+}
+
+.trace-row:last-child::before {
+  bottom: calc(100% - 11px);
+}
+
 .trace-marker {
+  position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
   width: 22px;
   height: 22px;
   margin-top: 1px;
+}
+
+.trace-node {
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  color: #ffffff;
-  background: #111827;
-  font-size: 11px;
-  font-weight: 700;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--bg, #ffffff), 0 0 0 5px rgba(15, 118, 110, 0.18);
 }
 
 .trace-content {
@@ -499,22 +583,38 @@ button {
   animation: livePulse 1s ease-in-out infinite;
 }
 
-.trace-row.active .trace-content p,
-.trace-row.active .trace-heading span {
-  color: var(--accent);
+.trace-row.active {
+  align-items: center;
 }
 
-.trace-row.active .trace-marker {
-  background: var(--accent);
+.trace-row.active .trace-content {
+  gap: 0;
+}
+
+.trace-live-label {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  animation: liveLabel 1.4s ease-in-out infinite;
 }
 
 .trace-spinner {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.45);
-  border-top-color: #ffffff;
+  border: 2px solid rgba(15, 118, 110, 0.22);
+  border-top-color: var(--accent);
   animation: traceSpin 0.7s linear infinite;
+}
+
+@keyframes liveLabel {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes traceSpin {

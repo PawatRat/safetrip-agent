@@ -97,7 +97,24 @@ class SafeTripOrchestrator:
         if self.verbose:
             print("\nPipeline>")
 
-        if self._should_write_submission_packet(state, message):
+        route_to_submission = self._should_write_submission_packet(state, message)
+        self._begin("Orchestrator", workflow_steps)
+        self._record_trace(
+            "Orchestrator",
+            "Receive the tourist message and choose the top-level route before any subagent runs.",
+            {
+                "workflow_stage": state.workflow_stage,
+                "is_confirmation_message": is_confirmation_message(message),
+                "has_pending_draft": bool(state.draft_text),
+            },
+            "Route to police submission."
+            if route_to_submission
+            else "Route into the triage pipeline (Intake -> Evidence -> Completeness).",
+        )
+        if self.verbose:
+            self._print_latest_trace("Orchestrator")
+
+        if route_to_submission:
             state, response_text = self._run_submission_flow(state, message, workflow_steps)
             self.case_state = state
             return self._build_result(workflow_steps, response_text, state)
