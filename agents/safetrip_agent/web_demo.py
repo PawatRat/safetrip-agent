@@ -51,6 +51,9 @@ class SafeTripDemoHandler(BaseHTTPRequestHandler):
         if self.path == "/api/chat":
             self._handle_chat()
             return
+        if self.path == "/api/chat/stream":
+            self._handle_chat_stream()
+            return
         if self.path == "/api/reset":
             self._handle_reset()
             return
@@ -82,6 +85,59 @@ class SafeTripDemoHandler(BaseHTTPRequestHandler):
                 },
                 status,
             )
+
+    def _handle_chat_stream(self) -> None:
+        try:
+            payload = self._read_json()
+            message = str(payload.get("message", "")).strip()
+            session_id = str(payload.get("session_id") or "default")
+            offline = payload.get("offline")
+            requested_offline = offline if isinstance(offline, bool) else None
+            if not message:
+                self._send_json({"error": "Message is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            state: DemoState = self.server.demo_state  # type: ignore[attr-defined]
+            orchestrator = state.orchestrator_for(session_id, requested_offline)
+        except Exception as exc:
+            status = (
+                HTTPStatus.BAD_REQUEST
+                if is_model_configuration_error(exc)
+                else HTTPStatus.INTERNAL_SERVER_ERROR
+            )
+            self._send_json(
+                {
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                    "hint": format_runtime_hint(exc),
+                },
+                status,
+            )
+            return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        try:
+            result = orchestrator.process(message, on_progress=self._write_sse)
+            self._write_sse({"type": "final", **result_to_payload(result)})
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as exc:
+            self._write_sse(
+                {
+                    "type": "error",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                    "hint": format_runtime_hint(exc),
+                }
+            )
+
+    def _write_sse(self, event: dict) -> None:
+        data = json.dumps(event)
+        self.wfile.write(f"data: {data}\n\n".encode("utf-8"))
+        self.wfile.flush()
 
     def _handle_status(self) -> None:
         state: DemoState = self.server.demo_state  # type: ignore[attr-defined]

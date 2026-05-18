@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .model_provider import build_agent_models
 from .schemas import AgentTrace, CaseState
@@ -72,6 +72,8 @@ class SafeTripOrchestrator:
         init=False,
     )
 
+    _on_progress: Callable[[dict], None] | None = field(default=None, init=False)
+
     def __post_init__(self) -> None:
         if self.use_model:
             self.agent_models = build_agent_models()
@@ -82,9 +84,14 @@ class SafeTripOrchestrator:
         self.case_state = CaseState()
         self.last_traces = []
 
-    def process(self, message: str) -> AgentRunResult:
+    def process(
+        self,
+        message: str,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> AgentRunResult:
         workflow_steps: list[str] = []
         self.last_traces = []
+        self._on_progress = on_progress
         state = self.case_state
 
         if self.verbose:
@@ -123,7 +130,7 @@ class SafeTripOrchestrator:
                 state,
                 workflow_steps,
             )
-            workflow_steps.append("Drafting Agent")
+            self._begin("Drafting Agent", workflow_steps)
             response_text = self._run_drafting_node(state)
             response_text = attach_guidance_to_response(response_text, state)
             state.draft_text = response_text
@@ -155,7 +162,7 @@ class SafeTripOrchestrator:
             if self.verbose:
                 self._print_latest_trace("Drafting Agent")
 
-        workflow_steps.append("Safety Agent")
+        self._begin("Safety Agent", workflow_steps)
         state, response_text = self._run_safety_node(state, response_text)
         response_text = attach_guidance_to_response(response_text, state)
         self._record_trace(
@@ -179,6 +186,7 @@ class SafeTripOrchestrator:
         response_text: str,
         state: CaseState,
     ) -> AgentRunResult:
+        self._on_progress = None
         return AgentRunResult(
             raw_result={
                 "workflow_steps": workflow_steps,
@@ -189,8 +197,22 @@ class SafeTripOrchestrator:
             case_state=state,
         )
 
-    def _run_node(self, name: str, node, state: CaseState, workflow_steps: list[str]) -> CaseState:
+    def _emit(self, event: dict) -> None:
+        callback = self._on_progress
+        if callback is None:
+            return
+        try:
+            callback(event)
+        except Exception:
+            # Streaming consumer disconnected; keep the pipeline running.
+            pass
+
+    def _begin(self, name: str, workflow_steps: list[str]) -> None:
         workflow_steps.append(name)
+        self._emit({"type": "agent_start", "agent_name": name})
+
+    def _run_node(self, name: str, node, state: CaseState, workflow_steps: list[str]) -> CaseState:
+        self._begin(name, workflow_steps)
         updated = node(state)
         if self.verbose:
             self._print_latest_trace(name)
@@ -299,7 +321,7 @@ class SafeTripOrchestrator:
         updated.messages.append(message)
         updated.user_confirmed_submission = True
         updated.workflow_stage = "confirmed_for_submission"
-        workflow_steps.append("Orchestrator Decision")
+        self._begin("Orchestrator Decision", workflow_steps)
         self._record_trace(
             "Orchestrator Decision",
             "Tourist confirmed the draft, so move to packet generation.",
@@ -309,7 +331,7 @@ class SafeTripOrchestrator:
             },
             "Route to Submission Packet Agent.",
         )
-        workflow_steps.append("Submission Packet Agent")
+        self._begin("Submission Packet Agent", workflow_steps)
         packet_root = self._submission_root_path()
         updated, packet_path = write_submission_packet(updated, packet_root)
         api_error = None
@@ -350,7 +372,7 @@ class SafeTripOrchestrator:
                 f"Packet path: {packet_path}\n"
                 f"Endpoint: {self.police_submission_endpoint}"
             )
-        workflow_steps.append("Safety Agent")
+        self._begin("Safety Agent", workflow_steps)
         updated, response_text = self._run_safety_node(updated, response_text)
         self._record_trace(
             "Safety Agent",
@@ -370,7 +392,7 @@ class SafeTripOrchestrator:
         state: CaseState,
         workflow_steps: list[str],
     ) -> None:
-        workflow_steps.append("Orchestrator Decision")
+        self._begin("Orchestrator Decision", workflow_steps)
         if state.report_ready:
             decision = "Evidence complete: route to Guidance Agent in report_route mode, then Drafting Agent."
         else:
@@ -395,14 +417,14 @@ class SafeTripOrchestrator:
         collected_data: dict,
         decision: str,
     ) -> None:
-        self.last_traces.append(
-            AgentTrace(
-                agent_name=agent_name,
-                thought=thought,
-                collected_data=collected_data,
-                decision=decision,
-            )
+        trace = AgentTrace(
+            agent_name=agent_name,
+            thought=thought,
+            collected_data=collected_data,
+            decision=decision,
         )
+        self.last_traces.append(trace)
+        self._emit({"type": "trace", "trace": trace.model_dump(mode="json")})
 
     def _print_latest_trace(self, agent_name: str) -> None:
         for trace in reversed(self.last_traces):

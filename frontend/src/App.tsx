@@ -5,8 +5,6 @@ import {
   CircleDashed,
   FileText,
   RefreshCcw,
-  Route,
-  ShieldCheck,
   Sparkles,
   UserRound,
 } from "lucide-react";
@@ -73,20 +71,20 @@ type ChatTurn = {
   workflowSteps?: string[];
   caseState?: CaseState;
   error?: string;
+  streaming?: boolean;
+  currentAgent?: string | null;
 };
+
+type StreamEvent =
+  | { type: "agent_start"; agent_name: string }
+  | { type: "trace"; trace: AgentTrace }
+  | ({ type: "final" } & ChatPayload)
+  | { type: "error"; error?: string; hint?: string };
 
 const examples = [
   "A taxi driver charged me 2500 THB and refused the meter near JJ Mall today.",
   "I booked a Phuket villa from Facebook and transferred 12000 THB, but the hotel has no booking.",
   "Someone stole my passport and wallet at a night market in Chiang Mai.",
-];
-
-const thinkingSteps = [
-  "Intake is reading the tourist message",
-  "Evidence is checking required information",
-  "Guidance is retrieving tourist legal context",
-  "Completeness is deciding whether a report can be drafted",
-  "Safety is reviewing the tourist-facing response",
 ];
 
 function createId() {
@@ -138,10 +136,53 @@ export default function App() {
     const turnId = createId();
     setInput("");
     setIsSending(true);
-    setTurns((current) => [...current, { id: turnId, userText: trimmed }]);
+    setTurns((current) => [
+      ...current,
+      { id: turnId, userText: trimmed, streaming: true, pipeline: [], workflowSteps: [] },
+    ]);
+
+    const patch = (mutate: (turn: ChatTurn) => ChatTurn) =>
+      setTurns((current) =>
+        current.map((turn) => (turn.id === turnId ? mutate(turn) : turn)),
+      );
+
+    const applyEvent = (event: StreamEvent) => {
+      if (event.type === "agent_start") {
+        patch((turn) => ({
+          ...turn,
+          currentAgent: event.agent_name,
+          workflowSteps: turn.workflowSteps?.includes(event.agent_name)
+            ? turn.workflowSteps
+            : [...(turn.workflowSteps ?? []), event.agent_name],
+        }));
+      } else if (event.type === "trace") {
+        patch((turn) => ({
+          ...turn,
+          pipeline: [...(turn.pipeline ?? []), event.trace],
+          currentAgent: null,
+        }));
+      } else if (event.type === "final") {
+        patch((turn) => ({
+          ...turn,
+          assistantText: event.final_text,
+          pipeline: event.agent_traces ?? turn.pipeline,
+          workflowSteps: event.workflow_steps ?? turn.workflowSteps,
+          caseState: event.case_state,
+          streaming: false,
+          currentAgent: null,
+        }));
+      } else if (event.type === "error") {
+        patch((turn) => ({
+          ...turn,
+          error: event.hint || event.error || "The request failed unexpectedly.",
+          streaming: false,
+          currentAgent: null,
+        }));
+      }
+    };
 
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -150,39 +191,46 @@ export default function App() {
           offline: mode === "offline",
         }),
       });
-      const payload = await response.json();
-      if (!response.ok) {
+
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({}));
         throw new Error(payload.hint || payload.error || "Request failed");
       }
 
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === turnId
-            ? {
-                ...turn,
-                assistantText: (payload as ChatPayload).final_text,
-                pipeline: (payload as ChatPayload).agent_traces,
-                workflowSteps: (payload as ChatPayload).workflow_steps,
-                caseState: (payload as ChatPayload).case_state,
-              }
-            : turn,
-        ),
-      );
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() ?? "";
+        for (const chunk of chunks) {
+          const dataLine = chunk
+            .split("\n")
+            .find((line) => line.startsWith("data:"));
+          if (!dataLine) continue;
+          try {
+            applyEvent(JSON.parse(dataLine.slice(5).trim()) as StreamEvent);
+          } catch {
+            // Ignore malformed/keepalive lines.
+          }
+        }
+      }
     } catch (error) {
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === turnId
-            ? {
-                ...turn,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "The request failed unexpectedly.",
-              }
-            : turn,
-        ),
-      );
+      patch((turn) => ({
+        ...turn,
+        error:
+          error instanceof Error
+            ? error.message
+            : "The request failed unexpectedly.",
+        streaming: false,
+        currentAgent: null,
+      }));
     } finally {
+      patch((turn) => (turn.streaming ? { ...turn, streaming: false } : turn));
       setIsSending(false);
     }
   }
@@ -251,21 +299,6 @@ export default function App() {
 
         <CasePanel caseState={latestCase} />
 
-        <section className="panel">
-          <div className="panel-title">
-            <Route size={16} />
-            Workflow
-          </div>
-          <ol className="workflow-list">
-            <li>Intake classification</li>
-            <li>Evidence requirements</li>
-            <li>Legal guidance retrieval</li>
-            <li>Readiness gate</li>
-            <li>Police report draft</li>
-            <li>Confirmed submission</li>
-          </ol>
-        </section>
-
         <button className="ghost-button" type="button" onClick={resetCase}>
           <RefreshCcw size={16} />
           Reset case
@@ -278,10 +311,6 @@ export default function App() {
             <h2>Tourist Support Chat</h2>
             <p>Every response includes the agent pipeline used to reach it.</p>
           </div>
-          <div className="topbar-status">
-            <ShieldCheck size={18} />
-            <span>Guidance uses local tourist legal knowledge base</span>
-          </div>
         </header>
 
         <div className="conversation" ref={listRef}>
@@ -290,7 +319,6 @@ export default function App() {
           ) : (
             turns.map((turn) => <ChatTurnView key={turn.id} turn={turn} />)
           )}
-          {isSending ? <ThinkingState /> : null}
         </div>
 
         <form className="composer" onSubmit={handleSubmit}>
@@ -347,8 +375,13 @@ function ChatTurnView({ turn }: { turn: ChatTurn }) {
         <div className="bubble">{turn.userText}</div>
       </div>
 
-      {turn.pipeline ? (
-        <PipelinePanel traces={turn.pipeline} steps={turn.workflowSteps ?? []} />
+      {turn.pipeline?.length || turn.streaming ? (
+        <PipelinePanel
+          traces={turn.pipeline ?? []}
+          steps={turn.workflowSteps ?? []}
+          streaming={turn.streaming ?? false}
+          currentAgent={turn.currentAgent}
+        />
       ) : null}
 
       {turn.assistantText ? (
@@ -380,18 +413,31 @@ function ChatTurnView({ turn }: { turn: ChatTurn }) {
 function PipelinePanel({
   traces,
   steps,
+  streaming,
+  currentAgent,
 }: {
   traces: AgentTrace[];
   steps: string[];
+  streaming: boolean;
+  currentAgent?: string | null;
 }) {
-  const [open, setOpen] = useState(true);
+  const [collapsed, setCollapsed] = useState(false);
+  const open = streaming || !collapsed;
+
+  const liveAgent = streaming
+    ? currentAgent ?? (traces.length === 0 ? "Starting pipeline" : null)
+    : null;
 
   return (
     <section className="pipeline">
-      <button className="pipeline-summary" type="button" onClick={() => setOpen(!open)}>
+      <button
+        className="pipeline-summary"
+        type="button"
+        onClick={() => setCollapsed((value) => !value)}
+      >
         <div>
-          <span className="thinking-pulse" />
-          <strong>Thinking process</strong>
+          <span className={streaming ? "thinking-pulse live" : "thinking-pulse"} />
+          <strong>{streaming ? "Thinking…" : "Thinking process"}</strong>
           <small>{steps.join(" -> ")}</small>
         </div>
         <ChevronDown className={open ? "rotated" : ""} size={18} />
@@ -413,6 +459,20 @@ function PipelinePanel({
               </div>
             </div>
           ))}
+          {liveAgent ? (
+            <div className="trace-row active" key="live-agent">
+              <div className="trace-marker">
+                <span className="trace-spinner" />
+              </div>
+              <div className="trace-content">
+                <div className="trace-heading">
+                  <strong>{pretty(liveAgent)}</strong>
+                  <span>working…</span>
+                </div>
+                <p>{pretty(liveAgent)} is analyzing the case right now.</p>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -446,31 +506,6 @@ function Field({ label, value }: { label: string; value: string }) {
     <div className="field">
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function ThinkingState() {
-  const [activeStep, setActiveStep] = useState(0);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setActiveStep((current) => Math.min(current + 1, thinkingSteps.length - 1));
-    }, 900);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  return (
-    <div className="thinking">
-      <div className="thinking-loader">
-        <span />
-        <span />
-        <span />
-      </div>
-      <div className="thinking-copy">
-        <strong>SafeTrip is thinking</strong>
-        <span>{thinkingSteps[activeStep]}</span>
-      </div>
     </div>
   );
 }
