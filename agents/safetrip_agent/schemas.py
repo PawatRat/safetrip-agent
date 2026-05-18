@@ -65,6 +65,27 @@ class CompletenessAssessment(BaseModel):
     rationale: str = ""
 
 
+class OrchestratorPlan(BaseModel):
+    intent: Literal[
+        "provide_info",
+        "want_recommendation",
+        "confirm_submission",
+        "question",
+    ] = "provide_info"
+    carries_case_data: bool = True
+    rationale: str = ""
+
+
+class PerceptionExtraction(BaseModel):
+    scam_type: ScamType = "unknown"
+    scam_type_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    rationale: str = ""
+    location: str | None = None
+    incident_time: str | None = None
+    amount_lost: str | None = None
+    evidence_names: list[str] = Field(default_factory=list)
+
+
 class GuidanceSelection(BaseModel):
     route: str
     source_ids: list[str] = Field(default_factory=list)

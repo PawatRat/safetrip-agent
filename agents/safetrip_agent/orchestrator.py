@@ -9,24 +9,25 @@ from .schemas import AgentTrace, CaseState
 from .subagents.completeness_agent import (
     COMPLETENESS_AGENT_PROMPT,
     update_case_completeness,
-    update_case_completeness_with_model,
 )
 from .subagents.drafting_agent import DRAFTING_AGENT_PROMPT
 from .subagents.drafting_agent import draft_report, draft_report_with_model
-from .subagents.evidence_agent import (
-    EVIDENCE_AGENT_PROMPT,
-    update_case_evidence,
-    update_case_evidence_with_model,
-)
 from .subagents.guidance_agent import (
     GUIDANCE_AGENT_PROMPT,
     update_case_guidance,
-    update_case_guidance_with_model,
 )
-from .subagents.intake_agent import (
-    INTAKE_AGENT_PROMPT,
-    extract_case_facts_with_model,
-    update_case_from_message,
+from .subagents.intake_agent import detect_language
+from .subagents.orchestrator_agent import (
+    ORCHESTRATOR_AGENT_PROMPT,
+    is_confirmation_message,
+    plan_turn,
+    plan_turn_with_model,
+)
+from .retrieval import retrieve_evidence_requirements, retrieve_legal_doc_ids
+from .subagents.perception_agent import (
+    PERCEPTION_AGENT_PROMPT,
+    update_case_perception,
+    update_case_perception_with_model,
 )
 from .subagents.safety_agent import SAFETY_AGENT_PROMPT
 from .subagents.safety_agent import review_case_safety, review_case_safety_with_model
@@ -61,10 +62,10 @@ class SafeTripOrchestrator:
     last_traces: list[AgentTrace] = field(default_factory=list, init=False)
     workflow_prompts: tuple[str, ...] = field(
         default=(
-            INTAKE_AGENT_PROMPT,
-            EVIDENCE_AGENT_PROMPT,
-            GUIDANCE_AGENT_PROMPT,
+            ORCHESTRATOR_AGENT_PROMPT,
+            PERCEPTION_AGENT_PROMPT,
             COMPLETENESS_AGENT_PROMPT,
+            GUIDANCE_AGENT_PROMPT,
             DRAFTING_AGENT_PROMPT,
             SAFETY_AGENT_PROMPT,
             SUBMISSION_PACKET_AGENT_PROMPT,
@@ -97,69 +98,65 @@ class SafeTripOrchestrator:
         if self.verbose:
             print("\nPipeline>")
 
-        route_to_submission = self._should_write_submission_packet(state, message)
-        self._begin("Orchestrator", workflow_steps)
-        self._record_trace(
-            "Orchestrator",
-            "Receive the tourist message and choose the top-level route before any subagent runs.",
-            {
-                "workflow_stage": state.workflow_stage,
-                "is_confirmation_message": is_confirmation_message(message),
-                "has_pending_draft": bool(state.draft_text),
-            },
-            "Route to police submission."
-            if route_to_submission
-            else "Route into the triage pipeline (Intake -> Evidence -> Completeness).",
+        plan = self._run_orchestrator(state, message, workflow_steps)
+        has_pending_draft = (
+            state.workflow_stage == "awaiting_user_confirmation"
+            and bool(state.draft_text)
         )
-        if self.verbose:
-            self._print_latest_trace("Orchestrator")
 
-        if route_to_submission:
+        # Confirmation -> police submission (hard-guarded by a pending draft).
+        if plan.intent == "confirm_submission" and has_pending_draft:
             state, response_text = self._run_submission_flow(state, message, workflow_steps)
             self.case_state = state
             return self._build_result(workflow_steps, response_text, state)
 
-        state = self._run_node(
-            "Intake Agent",
-            lambda current: self._run_intake_node(current, message),
-            state,
-            workflow_steps,
-        )
-        state = self._run_node(
-            "Evidence Agent",
-            lambda current: self._run_evidence_node(current, message),
-            state,
-            workflow_steps,
-        )
+        # The orchestrator owns appending the message exactly once; workers
+        # operate on the already-updated transcript.
+        state = state.model_copy(deep=True)
+        state.messages.append(message)
+        state.language = state.language or detect_language(message)
+
+        # Perception is conditional and incremental: only when the orchestrator
+        # judged that the message carries new or corrected case data.
+        if plan.carries_case_data:
+            state = self._run_node(
+                "Perception Agent",
+                lambda current: self._run_perception_node(current, message),
+                state,
+                workflow_steps,
+            )
+
+        # Completeness is a cheap deterministic readiness check.
         state = self._run_node(
             "Completeness Agent",
             self._run_completeness_node,
             state,
             workflow_steps,
         )
-        self._record_orchestrator_decision(state, workflow_steps)
 
-        if state.report_ready:
+        ready = state.report_ready and state.scam_type != "unknown"
+
+        if ready and not has_pending_draft:
             state.workflow_stage = "ready_to_draft"
+            self._begin("Drafting Agent", workflow_steps)
+            draft_text = self._run_drafting_node(state)
+            self._record_trace(
+                "Drafting Agent",
+                "Orchestrator routed to draft, so produce a police-ready report.",
+                {"draft_preview": summarize_text(draft_text)},
+                "Draft prepared; attach reporting guidance next.",
+            )
+            if self.verbose:
+                self._print_latest_trace("Drafting Agent")
             state = self._run_node(
                 "Guidance Agent",
                 lambda current: self._run_guidance_node(current, "report_route"),
                 state,
                 workflow_steps,
             )
-            self._begin("Drafting Agent", workflow_steps)
-            response_text = self._run_drafting_node(state)
-            response_text = attach_guidance_to_response(response_text, state)
+            response_text = attach_guidance_to_response(draft_text, state)
             state.draft_text = response_text
             state.workflow_stage = "awaiting_user_confirmation"
-            self._record_trace(
-                "Drafting Agent",
-                "Case is complete, so draft a police-ready report for tourist confirmation.",
-                {"draft_preview": summarize_text(response_text)},
-                "Awaiting tourist confirmation before packet generation.",
-            )
-            if self.verbose:
-                self._print_latest_trace("Drafting Agent")
         else:
             state.workflow_stage = "collecting_info"
             state = self._run_node(
@@ -170,14 +167,6 @@ class SafeTripOrchestrator:
             )
             response_text = build_intake_response(state)
             response_text = attach_guidance_to_response(response_text, state)
-            self._record_trace(
-                "Drafting Agent",
-                "Case is not complete, so drafting is skipped.",
-                {"missing_items": state.missing_items},
-                "Ask the next focused question instead of drafting.",
-            )
-            if self.verbose:
-                self._print_latest_trace("Drafting Agent")
 
         self._begin("Safety Agent", workflow_steps)
         state, response_text = self._run_safety_node(state, response_text)
@@ -235,81 +224,93 @@ class SafeTripOrchestrator:
             self._print_latest_trace(name)
         return updated
 
-    def _run_intake_node(self, state: CaseState, message: str) -> CaseState:
-        model = self._model_for("intake")
-        if not model:
-            updated = update_case_from_message(state, message)
-            self._record_trace(
-                "Intake Agent",
-                "Extract incident facts from the latest tourist message.",
-                intake_trace_data(updated),
-                "Updated case facts and classification.",
-            )
-            return updated
-
-        conversation = [*state.messages, message]
-        extracted_facts = extract_case_facts_with_model(model, conversation, message)
-        updated = update_case_from_message(state, message, extracted_facts)
-        self._record_trace(
-            "Intake Agent",
-            extracted_facts.rationale or "Structured extraction completed from conversation.",
-            intake_trace_data(updated),
-            "Updated case facts and classification.",
-        )
-        return updated
-
-    def _run_evidence_node(self, state: CaseState, message: str) -> CaseState:
-        model = self._model_for("evidence")
-        if not model:
-            updated = update_case_evidence(state, message)
+    def _run_orchestrator(self, state: CaseState, message: str, workflow_steps: list[str]):
+        """The supervisor: one LLM (or rule) call deciding intent + data."""
+        self._begin("Orchestrator", workflow_steps)
+        model = self._model_for("orchestrator")
+        if model:
+            plan = plan_turn_with_model(model, state, message)
         else:
-            updated = update_case_evidence_with_model(model, state, message)
+            plan = plan_turn(state, message)
         self._record_trace(
-            "Evidence Agent",
-            "Compare tourist-provided details against evidence requirements from the tool.",
+            "Orchestrator",
+            plan.rationale or "Select the workflow pathway before any worker runs.",
             {
-                "requirements": [item.model_dump() for item in updated.evidence_requirements],
+                "intent": plan.intent,
+                "carries_case_data": plan.carries_case_data,
+                "decided_by": "model" if model else "offline_rule",
+                "workflow_stage": state.workflow_stage,
+                "has_pending_draft": bool(state.draft_text),
+            },
+            "Route to police submission."
+            if plan.intent == "confirm_submission"
+            else (
+                "Run Perception (incremental), then assess and respond."
+                if plan.carries_case_data
+                else "No new case data; reuse known state and respond."
+            ),
+        )
+        if self.verbose:
+            self._print_latest_trace("Orchestrator")
+        return plan
+
+    def _run_perception_node(self, state: CaseState, message: str) -> CaseState:
+        model = self._model_for("perception")
+        if model:
+            updated = update_case_perception_with_model(model, state, message)
+        else:
+            updated = update_case_perception(state, message)
+        _requirements, retrieved_docs = retrieve_evidence_requirements(
+            updated.scam_type, message
+        )
+        self._record_trace(
+            "Perception Agent",
+            "Incrementally extract incident facts and retrieve required "
+            "evidence from the Case & Evidence DB in one pass.",
+            {
+                "scam_type": updated.scam_type,
+                "classification_confidence": updated.classification_confidence,
+                "location": updated.location,
+                "incident_time": updated.incident_time,
+                "amount_lost": updated.amount_lost,
                 "known_evidence": updated.known_evidence_names,
+                "retrieval": "case_evidence_db",
+                "retrieved_docs": retrieved_docs,
             },
-            "Updated evidence checklist and collected evidence.",
-        )
-        return updated
-
-    def _run_guidance_node(self, state: CaseState, mode: str) -> CaseState:
-        model = self._model_for("guidance")
-        if not model:
-            updated = update_case_guidance(state, mode)
-        else:
-            updated = update_case_guidance_with_model(model, state, mode)
-        self._record_trace(
-            "Guidance Agent",
-            f"Prepare guidance in {mode} mode using current case data.",
-            {
-                "mode": mode,
-                "route": updated.reporting_guidance.route if updated.reporting_guidance else None,
-                "source_ids": updated.reporting_guidance.source_ids
-                if updated.reporting_guidance
-                else [],
-            },
-            "Attached guidance for the current workflow branch.",
+            "Updated case facts, classification, and collected evidence.",
         )
         return updated
 
     def _run_completeness_node(self, state: CaseState) -> CaseState:
-        model = self._model_for("completeness")
-        if not model:
-            updated = update_case_completeness(state)
-        else:
-            updated = update_case_completeness_with_model(model, state)
+        updated = update_case_completeness(state)
         self._record_trace(
             "Completeness Agent",
-            "Assess whether the case has enough facts and evidence to draft.",
+            "Deterministically check whether required fields and evidence are present.",
             {
                 "report_ready": updated.report_ready,
                 "missing_items": updated.missing_items,
                 "next_question": updated.next_question,
             },
             "Returned readiness assessment to the orchestrator.",
+        )
+        return updated
+
+    def _run_guidance_node(self, state: CaseState, mode: str) -> CaseState:
+        updated = update_case_guidance(state, mode)
+        retrieved_docs = retrieve_legal_doc_ids(updated.scam_type, mode)
+        self._record_trace(
+            "Guidance Agent",
+            f"Retrieve tourist-facing guidance from the Legal DB ({mode}).",
+            {
+                "mode": mode,
+                "route": updated.reporting_guidance.route if updated.reporting_guidance else None,
+                "source_ids": updated.reporting_guidance.source_ids
+                if updated.reporting_guidance
+                else [],
+                "retrieval": "legal_db",
+                "retrieved_docs": retrieved_docs,
+            },
+            "Attached guidance for the current workflow branch.",
         )
         return updated
 
@@ -320,10 +321,12 @@ class SafeTripOrchestrator:
         return draft_report_with_model(model, state)
 
     def _run_safety_node(self, state: CaseState, response_text: str) -> tuple[CaseState, str]:
+        """Deterministic safety gate every turn; LLM rewrite only if flagged."""
+        checked_state, checked_text = review_case_safety(state, response_text)
         model = self._model_for("safety")
-        if not model:
-            return review_case_safety(state, response_text)
-        return review_case_safety_with_model(model, state, response_text)
+        if model and checked_state.safety_review.flags:
+            return review_case_safety_with_model(model, state, response_text)
+        return checked_state, checked_text
 
     def _model_for(self, agent_name: str):
         return self.agent_models.get(agent_name) or self.model
@@ -338,16 +341,6 @@ class SafeTripOrchestrator:
         updated.messages.append(message)
         updated.user_confirmed_submission = True
         updated.workflow_stage = "confirmed_for_submission"
-        self._begin("Orchestrator Decision", workflow_steps)
-        self._record_trace(
-            "Orchestrator Decision",
-            "Tourist confirmed the draft, so move to packet generation.",
-            {
-                "previous_stage": state.workflow_stage,
-                "confirmation_message": message,
-            },
-            "Route to Submission Packet Agent.",
-        )
         self._begin("Submission Packet Agent", workflow_steps)
         packet_root = self._submission_root_path()
         updated, packet_path = write_submission_packet(updated, packet_root)
@@ -404,29 +397,6 @@ class SafeTripOrchestrator:
             self._print_all_traces()
         return updated, response_text
 
-    def _record_orchestrator_decision(
-        self,
-        state: CaseState,
-        workflow_steps: list[str],
-    ) -> None:
-        self._begin("Orchestrator Decision", workflow_steps)
-        if state.report_ready:
-            decision = "Evidence complete: route to Guidance Agent in report_route mode, then Drafting Agent."
-        else:
-            decision = "Evidence incomplete: route to Guidance Agent in intake_help mode, then ask one next question."
-        self._record_trace(
-            "Orchestrator Decision",
-            "Use completeness assessment and case state to choose the next branch.",
-            {
-                "report_ready": state.report_ready,
-                "missing_items": state.missing_items,
-                "workflow_stage": state.workflow_stage,
-            },
-            decision,
-        )
-        if self.verbose:
-            self._print_latest_trace("Orchestrator Decision")
-
     def _record_trace(
         self,
         agent_name: str,
@@ -453,13 +423,6 @@ class SafeTripOrchestrator:
     def _print_all_traces(self) -> None:
         for trace in self.last_traces:
             print(format_trace(trace))
-
-    def _should_write_submission_packet(self, state: CaseState, message: str) -> bool:
-        return (
-            state.workflow_stage == "awaiting_user_confirmation"
-            and bool(state.draft_text)
-            and is_confirmation_message(message)
-        )
 
     def _submission_root_path(self) -> Path:
         if self.submission_output_root.is_absolute():
@@ -523,27 +486,6 @@ def intake_trace_data(state: CaseState) -> dict:
         "amount_lost": state.amount_lost,
         "facts": [fact.model_dump() for fact in state.facts],
     }
-
-
-def is_confirmation_message(message: str) -> bool:
-    normalized = message.strip().lower()
-    confirmations = {
-        "yes",
-        "yes confirm",
-        "confirm",
-        "confirmed",
-        "submit",
-        "send",
-        "send it",
-        "looks good",
-        "correct",
-        "that is correct",
-        "ok",
-        "okay",
-    }
-    if normalized in confirmations or normalized.startswith(("yes ", "yes,")):
-        return True
-    return any(phrase in normalized for phrase in ["please submit", "please send", "i confirm"])
 
 
 def format_trace(trace: AgentTrace) -> str:

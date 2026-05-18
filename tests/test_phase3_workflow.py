@@ -14,12 +14,10 @@ from safetrip_agent.subagents.completeness_agent import update_case_completeness
 from safetrip_agent.subagents.evidence_agent import update_case_evidence
 from safetrip_agent.subagents.intake_agent import classify_message, update_case_from_message
 from safetrip_agent.schemas import (
-    CaseFactExtraction,
     CaseState,
-    CompletenessAssessment,
     DraftingResult,
-    EvidenceExtraction,
-    GuidanceSelection,
+    OrchestratorPlan,
+    PerceptionExtraction,
     SafetyAssessment,
 )
 
@@ -90,53 +88,20 @@ class Phase3WorkflowTests(unittest.TestCase):
         orchestrator = SafeTripOrchestrator(use_model=False)
         orchestrator.model = FakeExtractionModel(
             {
-                CaseFactExtraction: [
-                    CaseFactExtraction(
+                OrchestratorPlan: [
+                    OrchestratorPlan(intent="provide_info", carries_case_data=True),
+                    OrchestratorPlan(intent="provide_info", carries_case_data=True),
+                ],
+                PerceptionExtraction: [
+                    PerceptionExtraction(
                         scam_type="taxi_overcharge",
                         scam_type_confidence=0.89,
                         rationale="Ride and driver terms matched.",
                         amount_lost="2500 THB",
+                        evidence_names=["fare_requested_and_paid"],
                     ),
-                    CaseFactExtraction(
+                    PerceptionExtraction(
                         location="chatuchak in jj mall in front of that mall",
-                    ),
-                ],
-                EvidenceExtraction: [
-                    EvidenceExtraction(evidence_names=["fare_requested_and_paid"]),
-                    EvidenceExtraction(evidence_names=[]),
-                ],
-                GuidanceSelection: [
-                    GuidanceSelection(
-                        route="Use Tourist Police 1155/app for immediate tourist help.",
-                        source_ids=["seed:tourist-police-1155-app"],
-                    ),
-                    GuidanceSelection(
-                        route="Use Tourist Police 1155/app for immediate tourist help.",
-                        source_ids=["seed:tourist-police-1155-app"],
-                    ),
-                ],
-                CompletenessAssessment: [
-                    CompletenessAssessment(
-                        report_ready=False,
-                        missing_items=[
-                            "incident_location",
-                            "incident_time",
-                            "pickup_and_dropoff",
-                        ],
-                        next_question="Where in Thailand did this happen?",
-                    ),
-                    CompletenessAssessment(
-                        report_ready=False,
-                        missing_items=["incident_time", "pickup_and_dropoff"],
-                        next_question="When did this happen? An approximate date and time is okay.",
-                    ),
-                ],
-                SafetyAssessment: [
-                    SafetyAssessment(
-                        response_text="Where in Thailand did this happen?",
-                    ),
-                    SafetyAssessment(
-                        response_text="When did this happen? An approximate date and time is okay.",
                     ),
                 ],
             }
@@ -214,36 +179,27 @@ class Phase3WorkflowTests(unittest.TestCase):
             )
             orchestrator.model = FakeExtractionModel(
                 {
-                    CaseFactExtraction: [
-                        CaseFactExtraction(
+                    OrchestratorPlan: [
+                        OrchestratorPlan(
+                            intent="provide_info", carries_case_data=True
+                        ),
+                        OrchestratorPlan(
+                            intent="confirm_submission", carries_case_data=False
+                        ),
+                    ],
+                    PerceptionExtraction: [
+                        PerceptionExtraction(
                             scam_type="fake_accommodation",
                             scam_type_confidence=0.9,
                             rationale="Accommodation scam facts are present.",
                             location="Phuket",
                             incident_time="today",
                             amount_lost="12000 THB",
-                        ),
-                    ],
-                    EvidenceExtraction: [
-                        EvidenceExtraction(
                             evidence_names=[
                                 "property_listing_url",
                                 "payment_record",
                                 "booking_reference",
-                            ]
-                        ),
-                    ],
-                    CompletenessAssessment: [
-                        CompletenessAssessment(
-                            report_ready=True,
-                            missing_items=[],
-                            next_question=None,
-                        ),
-                    ],
-                    GuidanceSelection: [
-                        GuidanceSelection(
-                            route="Use Tourist Police support with accommodation evidence.",
-                            source_ids=["tourist-police-trust"],
+                            ],
                         ),
                     ],
                     DraftingResult: [
@@ -253,20 +209,6 @@ class Phase3WorkflowTests(unittest.TestCase):
                                 "The tourist reports a fake accommodation case in Phuket today.\n\n"
                                 "Please confirm whether this draft is accurate."
                             )
-                        ),
-                    ],
-                    SafetyAssessment: [
-                        SafetyAssessment(
-                            response_text=(
-                                "Case draft for tourist confirmation\n\n"
-                                "The tourist reports a fake accommodation case in Phuket today.\n\n"
-                                "Please confirm whether this draft is accurate.\n\n"
-                                "Recommendation:\n"
-                                "Use Tourist Police support with accommodation evidence."
-                            )
-                        ),
-                        SafetyAssessment(
-                            response_text="Police submission packet prepared.",
                         ),
                     ],
                 }
@@ -280,12 +222,11 @@ class Phase3WorkflowTests(unittest.TestCase):
             self.assertEqual(
                 draft_result.raw_result["workflow_steps"],
                 [
-                    "Intake Agent",
-                    "Evidence Agent",
+                    "Orchestrator",
+                    "Perception Agent",
                     "Completeness Agent",
-                    "Orchestrator Decision",
-                    "Guidance Agent",
                     "Drafting Agent",
+                    "Guidance Agent",
                     "Safety Agent",
                 ],
             )
@@ -295,10 +236,7 @@ class Phase3WorkflowTests(unittest.TestCase):
             )
             self.assertIn("Please confirm", draft_result.final_text)
             self.assertIn("Recommendation:", draft_result.final_text)
-            self.assertIn(
-                "Use Tourist Police support with accommodation evidence.",
-                draft_result.final_text,
-            )
+            self.assertIn("Tourist Police", draft_result.final_text)
             self.assertTrue(draft_result.raw_result["agent_traces"])
 
             confirmation_result = orchestrator.process("confirm")
@@ -339,7 +277,7 @@ class Phase3WorkflowTests(unittest.TestCase):
             self.assertEqual(
                 confirmation_result.raw_result["workflow_steps"],
                 [
-                    "Orchestrator Decision",
+                    "Orchestrator",
                     "Submission Packet Agent",
                     "Safety Agent",
                 ],
@@ -369,53 +307,35 @@ class Phase3WorkflowTests(unittest.TestCase):
 
     def test_orchestrator_uses_agent_specific_models(self) -> None:
         agent_models = {
-            "intake": FakeExtractionModel(
+            "orchestrator": FakeExtractionModel(
                 {
-                    CaseFactExtraction: [
-                        CaseFactExtraction(
+                    OrchestratorPlan: [
+                        OrchestratorPlan(
+                            intent="provide_info", carries_case_data=True
+                        )
+                    ]
+                },
+                name="orchestrator",
+            ),
+            "perception": FakeExtractionModel(
+                {
+                    PerceptionExtraction: [
+                        PerceptionExtraction(
                             scam_type="fake_accommodation",
                             scam_type_confidence=0.9,
                             rationale="Accommodation scam facts are present.",
                             location="Phuket",
                             incident_time="today",
                             amount_lost="12000 THB",
-                        )
-                    ]
-                },
-                name="intake",
-            ),
-            "evidence": FakeExtractionModel(
-                {
-                    EvidenceExtraction: [
-                        EvidenceExtraction(
                             evidence_names=[
                                 "property_listing_url",
                                 "payment_record",
                                 "booking_reference",
-                            ]
+                            ],
                         )
                     ]
                 },
-                name="evidence",
-            ),
-            "completeness": FakeExtractionModel(
-                {
-                    CompletenessAssessment: [
-                        CompletenessAssessment(report_ready=True, missing_items=[])
-                    ]
-                },
-                name="completeness",
-            ),
-            "guidance": FakeExtractionModel(
-                {
-                    GuidanceSelection: [
-                        GuidanceSelection(
-                            route="Use Tourist Police support with accommodation evidence.",
-                            source_ids=["seed:tourist-police-trust-portal"],
-                        )
-                    ]
-                },
-                name="guidance",
+                name="perception",
             ),
             "drafting": FakeExtractionModel(
                 {
@@ -427,16 +347,7 @@ class Phase3WorkflowTests(unittest.TestCase):
                 },
                 name="drafting",
             ),
-            "safety": FakeExtractionModel(
-                {
-                    SafetyAssessment: [
-                        SafetyAssessment(
-                            response_text="Case draft for tourist confirmation\n\nPlease confirm."
-                        )
-                    ]
-                },
-                name="safety",
-            ),
+            "safety": FakeExtractionModel({}, name="safety"),
         }
         orchestrator = SafeTripOrchestrator(use_model=False)
         orchestrator.agent_models = agent_models
@@ -447,12 +358,10 @@ class Phase3WorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(result.case_state.workflow_stage, "awaiting_user_confirmation")
-        self.assertEqual(agent_models["intake"].calls, [CaseFactExtraction])
-        self.assertEqual(agent_models["evidence"].calls, [EvidenceExtraction])
-        self.assertEqual(agent_models["completeness"].calls, [CompletenessAssessment])
-        self.assertEqual(agent_models["guidance"].calls, [GuidanceSelection])
+        self.assertEqual(agent_models["orchestrator"].calls, [OrchestratorPlan])
+        self.assertEqual(agent_models["perception"].calls, [PerceptionExtraction])
         self.assertEqual(agent_models["drafting"].calls, [DraftingResult])
-        self.assertEqual(agent_models["safety"].calls, [SafetyAssessment])
+        self.assertEqual(agent_models["safety"].calls, [])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 
 DEFAULT_AGENT_MODELS = {
     "orchestrator": "gemini-2.5-flash",
+    "perception": "gemini-2.5-flash",
     "intake": "gemini-2.5-flash",
     "evidence": "gemini-2.5-flash",
     "completeness": "gemini-2.5-pro",

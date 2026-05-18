@@ -17,14 +17,13 @@ from safetrip_agent.web_demo import result_to_payload
 from safetrip_agent.legal_knowledge_base import build_guidance_from_knowledge
 from safetrip_agent.schemas import (
     CaseState,
-    CompletenessAssessment,
-    DraftingResult,
     EvidenceExtraction,
-    GuidanceSelection,
-    SafetyAssessment,
+    OrchestratorPlan,
+    PerceptionExtraction,
 )
 from safetrip_agent.subagents.evidence_agent import update_case_evidence_with_model
 from safetrip_agent.subagents.guidance_agent import update_case_guidance
+from safetrip_agent.subagents.perception_agent import update_case_perception_with_model
 from safetrip_agent.subagents.safety_agent import review_case_safety
 from safetrip_agent.subagents.submission_packet_agent import (
     build_police_submission_payload,
@@ -71,10 +70,9 @@ class DetailedBehaviorTests(unittest.TestCase):
         self.assertEqual(
             result.raw_result["workflow_steps"],
             [
-                "Intake Agent",
-                "Evidence Agent",
+                "Orchestrator",
+                "Perception Agent",
                 "Completeness Agent",
-                "Orchestrator Decision",
                 "Guidance Agent",
                 "Safety Agent",
             ],
@@ -261,7 +259,11 @@ class DetailedBehaviorTests(unittest.TestCase):
             self.assertEqual(result.case_state.workflow_stage, "submission_packet_written")
             self.assertEqual(
                 result.raw_result["workflow_steps"],
-                ["Orchestrator Decision", "Submission Packet Agent", "Safety Agent"],
+                [
+                    "Orchestrator",
+                    "Submission Packet Agent",
+                    "Safety Agent",
+                ],
             )
 
     def test_web_demo_payload_contains_chat_and_pipeline_fields(self) -> None:
@@ -274,43 +276,25 @@ class DetailedBehaviorTests(unittest.TestCase):
         self.assertIn("workflow_steps", payload)
         self.assertIn("agent_traces", payload)
         self.assertIn("case_state", payload)
-        self.assertIn("Intake Agent", payload["workflow_steps"])
+        self.assertIn("Perception Agent", payload["workflow_steps"])
         self.assertTrue(payload["agent_traces"])
 
     def test_model_completeness_branch_does_not_repeat_answered_location(self) -> None:
         responses = {
-            "intake": StaticStructuredModel(
-                response=type(
-                    "Extraction",
-                    (),
-                    {
-                        "scam_type": "taxi_overcharge",
-                        "scam_type_confidence": 0.9,
-                        "rationale": "Taxi overcharge detected.",
-                        "location": "near Chatuchak JJ Mall",
-                        "incident_time": None,
-                        "amount_lost": "2500 THB",
-                    },
-                )()
-            ),
-            "evidence": StaticStructuredModel(
-                response=EvidenceExtraction(evidence_names=["fare_requested_and_paid"])
-            ),
-            "completeness": StaticStructuredModel(
-                response=CompletenessAssessment(
-                    report_ready=False,
-                    missing_items=["incident_time", "pickup_and_dropoff"],
-                    next_question="When did this happen?",
+            "orchestrator": StaticStructuredModel(
+                response=OrchestratorPlan(
+                    intent="provide_info", carries_case_data=True
                 )
             ),
-            "guidance": StaticStructuredModel(
-                response=GuidanceSelection(
-                    route="Collect time and route details.",
-                    source_ids=["seed:tourist-police-1155-app"],
+            "perception": StaticStructuredModel(
+                response=PerceptionExtraction(
+                    scam_type="taxi_overcharge",
+                    scam_type_confidence=0.9,
+                    rationale="Taxi overcharge detected.",
+                    location="near Chatuchak JJ Mall",
+                    amount_lost="2500 THB",
+                    evidence_names=["fare_requested_and_paid"],
                 )
-            ),
-            "safety": StaticStructuredModel(
-                response=SafetyAssessment(response_text="When did this happen?")
             ),
         }
         orchestrator = SafeTripOrchestrator(use_model=False)
@@ -324,7 +308,99 @@ class DetailedBehaviorTests(unittest.TestCase):
         self.assertNotIn("incident_location", result.case_state.missing_items)
         self.assertIn("incident_time", result.case_state.missing_items)
         self.assertIn("When did this happen?", result.final_text)
-        self.assertIn("Recommendation:", result.final_text)
+        self.assertIn("Suggested next steps:", result.final_text)
+
+    def test_advice_only_followup_skips_perception_agent(self) -> None:
+        orchestrator = SafeTripOrchestrator(use_model=False)
+        first = orchestrator.process(
+            "Taxi driver overcharged me in Bangkok today and charged 2500 THB."
+        )
+
+        self.assertEqual(first.case_state.scam_type, "taxi_overcharge")
+
+        second = orchestrator.process("what should i do")
+
+        self.assertEqual(
+            second.raw_result["workflow_steps"],
+            [
+                "Orchestrator",
+                "Completeness Agent",
+                "Guidance Agent",
+                "Safety Agent",
+            ],
+        )
+        self.assertEqual(second.case_state.messages.count("what should i do"), 1)
+        self.assertIn("Suggested next steps:", second.final_text)
+        self.assertIn("Tourist Police 1155", second.final_text)
+
+    def test_model_confirmation_is_ignored_without_pending_draft(self) -> None:
+        responses = {
+            "orchestrator": StaticStructuredModel(
+                response=OrchestratorPlan(
+                    intent="confirm_submission",
+                    carries_case_data=False,
+                    rationale="Model incorrectly treated this as confirmation.",
+                )
+            ),
+            "perception": StaticStructuredModel(
+                response=PerceptionExtraction(
+                    scam_type="taxi_overcharge",
+                    scam_type_confidence=0.85,
+                    location="Bangkok",
+                    incident_time="today",
+                    amount_lost="2500 THB",
+                    evidence_names=["fare_requested_and_paid"],
+                )
+            ),
+        }
+        orchestrator = SafeTripOrchestrator(use_model=False)
+        orchestrator.agent_models = responses
+
+        result = orchestrator.process("confirm")
+
+        self.assertNotIn("Submission Packet Agent", result.raw_result["workflow_steps"])
+        self.assertIn("Perception Agent", result.raw_result["workflow_steps"])
+        self.assertEqual(result.case_state.workflow_stage, "collecting_info")
+        self.assertIsNone(result.case_state.submission_packet_path)
+
+    def test_model_perception_filters_unknown_evidence_names(self) -> None:
+        model = StaticStructuredModel(
+            response=PerceptionExtraction(
+                scam_type="fake_accommodation",
+                scam_type_confidence=0.9,
+                location="Phuket",
+                incident_time="today",
+                amount_lost="12000 THB",
+                evidence_names=[
+                    "payment_record",
+                    "seller_chat_or_email",
+                    "not_a_real_evidence_name",
+                ],
+            )
+        )
+        state = CaseState(messages=["I booked a villa and paid 12000 THB."])
+
+        updated = update_case_perception_with_model(
+            model,
+            state,
+            "I have the payment record and seller chat.",
+        )
+
+        self.assertEqual(model.schema, PerceptionExtraction)
+        self.assertEqual(updated.scam_type, "fake_accommodation")
+        self.assertEqual(
+            updated.known_evidence_names,
+            ["payment_record", "seller_chat_or_email"],
+        )
+
+    def test_orchestrator_appends_latest_message_once(self) -> None:
+        orchestrator = SafeTripOrchestrator(use_model=False)
+        message = "I booked a Phuket villa today and paid 12000 THB."
+
+        result = orchestrator.process(message)
+
+        self.assertEqual(result.case_state.messages.count(message), 1)
+        self.assertEqual(result.case_state.messages[-1], message)
 
 
 if __name__ == "__main__":
