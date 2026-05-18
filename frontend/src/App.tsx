@@ -1,7 +1,6 @@
 import {
   ArrowUp,
   Bot,
-  CheckCircle2,
   ChevronDown,
   CircleDashed,
   FileText,
@@ -80,6 +79,14 @@ const examples = [
   "A taxi driver charged me 2500 THB and refused the meter near JJ Mall today.",
   "I booked a Phuket villa from Facebook and transferred 12000 THB, but the hotel has no booking.",
   "Someone stole my passport and wallet at a night market in Chiang Mai.",
+];
+
+const thinkingSteps = [
+  "Intake is reading the tourist message",
+  "Evidence is checking required information",
+  "Guidance is retrieving tourist legal context",
+  "Completeness is deciding whether a report can be drafted",
+  "Safety is reviewing the tourist-facing response",
 ];
 
 function createId() {
@@ -384,7 +391,7 @@ function PipelinePanel({
       <button className="pipeline-summary" type="button" onClick={() => setOpen(!open)}>
         <div>
           <span className="thinking-pulse" />
-          <strong>Agent pipeline</strong>
+          <strong>Thinking process</strong>
           <small>{steps.join(" -> ")}</small>
         </div>
         <ChevronDown className={open ? "rotated" : ""} size={18} />
@@ -394,7 +401,7 @@ function PipelinePanel({
           {traces.map((trace, index) => (
             <div className="trace-row" key={`${trace.agent_name ?? "agent"}-${index}`}>
               <div className="trace-marker">
-                <CheckCircle2 size={16} />
+                <span>{index + 1}</span>
               </div>
               <div className="trace-content">
                 <div className="trace-heading">
@@ -444,24 +451,57 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 function ThinkingState() {
+  const [activeStep, setActiveStep] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActiveStep((current) => Math.min(current + 1, thinkingSteps.length - 1));
+    }, 900);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return (
     <div className="thinking">
-      <span />
-      <span />
-      <span />
-      SafeTrip agents are working
+      <div className="thinking-loader">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="thinking-copy">
+        <strong>SafeTrip is thinking</strong>
+        <span>{thinkingSteps[activeStep]}</span>
+      </div>
     </div>
   );
 }
 
 function FormattedText({ text }: { text: string }) {
+  const [visibleText, setVisibleText] = useState("");
+
+  useEffect(() => {
+    setVisibleText("");
+    let index = 0;
+    const timer = window.setInterval(() => {
+      index = Math.min(index + 3, text.length);
+      setVisibleText(text.slice(0, index));
+      document.querySelector(".conversation")?.scrollTo({
+        top: document.querySelector(".conversation")?.scrollHeight ?? 0,
+      });
+      if (index >= text.length) {
+        window.clearInterval(timer);
+      }
+    }, 14);
+    return () => window.clearInterval(timer);
+  }, [text]);
+
   return (
     <>
-      {text.split("\n").map((line, index) => (
+      {visibleText.split("\n").map((line, index) => (
         <span className="text-line" key={`${line}-${index}`}>
           {line || "\u00a0"}
         </span>
       ))}
+      {visibleText.length < text.length ? <span className="typing-cursor" /> : null}
     </>
   );
 }
