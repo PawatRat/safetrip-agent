@@ -31,6 +31,11 @@ from .subagents.perception_agent import (
 )
 from .subagents.safety_agent import SAFETY_AGENT_PROMPT
 from .subagents.safety_agent import review_case_safety, review_case_safety_with_model
+from .subagents.synthesis_agent import (
+    SYNTHESIS_AGENT_PROMPT,
+    compose_response,
+    compose_response_with_model,
+)
 from .subagents.submission_packet_agent import (
     DEFAULT_POLICE_SUBMISSION_ENDPOINT,
     HttpPost,
@@ -67,6 +72,7 @@ class SafeTripOrchestrator:
             COMPLETENESS_AGENT_PROMPT,
             GUIDANCE_AGENT_PROMPT,
             DRAFTING_AGENT_PROMPT,
+            SYNTHESIS_AGENT_PROMPT,
             SAFETY_AGENT_PROMPT,
             SUBMISSION_PACKET_AGENT_PROMPT,
         ),
@@ -157,6 +163,7 @@ class SafeTripOrchestrator:
             response_text = attach_guidance_to_response(draft_text, state)
             state.draft_text = response_text
             state.workflow_stage = "awaiting_user_confirmation"
+            synthesized = False
         else:
             state.workflow_stage = "collecting_info"
             state = self._run_node(
@@ -167,10 +174,15 @@ class SafeTripOrchestrator:
             )
             response_text = build_intake_response(state)
             response_text = attach_guidance_to_response(response_text, state)
+            response_text = self._run_synthesis_node(
+                state, response_text, workflow_steps
+            )
+            synthesized = True
 
         self._begin("Safety Agent", workflow_steps)
         state, response_text = self._run_safety_node(state, response_text)
-        response_text = attach_guidance_to_response(response_text, state)
+        if not synthesized:
+            response_text = attach_guidance_to_response(response_text, state)
         self._record_trace(
             "Safety Agent",
             "Review tourist-facing response for unsafe claims and urgent danger signals.",
@@ -313,6 +325,32 @@ class SafeTripOrchestrator:
             "Attached guidance for the current workflow branch.",
         )
         return updated
+
+    def _run_synthesis_node(
+        self,
+        state: CaseState,
+        response_text: str,
+        workflow_steps: list[str],
+    ) -> str:
+        """Compose one natural tourist-facing reply from gathered outputs."""
+        self._begin("Synthesis Agent", workflow_steps)
+        model = self._model_for("synthesis")
+        if model:
+            composed = compose_response_with_model(model, state, response_text)
+        else:
+            composed = compose_response(state, response_text)
+        self._record_trace(
+            "Synthesis Agent",
+            "Synthesize all gathered agent outputs into one natural reply.",
+            {
+                "decided_by": "model" if model else "offline_passthrough",
+                "preview": summarize_text(composed),
+            },
+            "Final tourist-facing message composed.",
+        )
+        if self.verbose:
+            self._print_latest_trace("Synthesis Agent")
+        return composed
 
     def _run_drafting_node(self, state: CaseState) -> str:
         model = self._model_for("drafting")

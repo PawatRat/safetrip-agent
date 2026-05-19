@@ -74,6 +74,7 @@ class DetailedBehaviorTests(unittest.TestCase):
                 "Perception Agent",
                 "Completeness Agent",
                 "Guidance Agent",
+                "Synthesis Agent",
                 "Safety Agent",
             ],
         )
@@ -326,6 +327,7 @@ class DetailedBehaviorTests(unittest.TestCase):
                 "Orchestrator",
                 "Completeness Agent",
                 "Guidance Agent",
+                "Synthesis Agent",
                 "Safety Agent",
             ],
         )

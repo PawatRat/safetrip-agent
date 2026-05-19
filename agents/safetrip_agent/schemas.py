@@ -96,6 +96,10 @@ class DraftingResult(BaseModel):
     response_text: str
 
 
+class SynthesisResult(BaseModel):
+    response_text: str
+
+
 class SafetyAssessment(BaseModel):
     blocked: bool = False
     flags: list[str] = Field(default_factory=list)

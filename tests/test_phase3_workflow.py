@@ -19,6 +19,7 @@ from safetrip_agent.schemas import (
     OrchestratorPlan,
     PerceptionExtraction,
     SafetyAssessment,
+    SynthesisResult,
 )
 
 
@@ -102,6 +103,14 @@ class Phase3WorkflowTests(unittest.TestCase):
                     ),
                     PerceptionExtraction(
                         location="chatuchak in jj mall in front of that mall",
+                    ),
+                ],
+                SynthesisResult: [
+                    SynthesisResult(
+                        response_text="Thanks for the details. Where in Thailand did this happen?"
+                    ),
+                    SynthesisResult(
+                        response_text="Got it. When did this happen? An approximate date and time is okay."
                     ),
                 ],
             }

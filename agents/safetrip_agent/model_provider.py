@@ -13,6 +13,7 @@ DEFAULT_AGENT_MODELS = {
     "completeness": "gemini-2.5-pro",
     "guidance": "gemini-2.5-flash",
     "drafting": "gemini-2.5-pro",
+    "synthesis": "gemini-2.5-flash",
     "safety": "gemini-2.5-pro",
 }
 
