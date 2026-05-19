@@ -6,15 +6,34 @@ from ..schemas import CaseState, SynthesisResult
 
 
 SYNTHESIS_AGENT_PROMPT = (
-    "Synthesis Agent: you write the single tourist-facing reply. Take everything "
-    "the other agents gathered (case classification, what is still missing, the "
-    "next question to ask, and the retrieved guidance and next steps) and turn it "
-    "into one warm, clear, human message - not a form dump. If information is "
-    "still being collected, ask exactly the one next question naturally and "
-    "briefly explain why it helps. Weave in the recommended next steps and the "
-    "official channel without bullet-point boilerplate. Never claim a police "
-    "report has been submitted. Keep it concise and reassuring."
+    "Synthesis Agent: you write the single tourist-facing reply. Turn everything "
+    "the other agents gathered into a clear, scannable message a stressed "
+    "traveller can read fast. Be warm but structured. Use this exact layout in "
+    "plain text (no markdown symbols like # or *, no internal field names):\n\n"
+    "1. One short empathetic sentence acknowledging what happened.\n"
+    "2. A line `What to do now:` followed by 1-3 short `- ` bullet points "
+    "(the recommended actions and the official channel, in plain language).\n"
+    "3. A line `Evidence to prepare:` followed by `- ` bullet points, one per "
+    "still-needed item, each as 'Item - short reason why it helps'. Skip this "
+    "section only if nothing is missing.\n"
+    "4. A final line that clearly asks the ONE next question, e.g. "
+    "`To continue, please tell me: <question>`. Skip only if there is no next "
+    "question.\n\n"
+    "Separate each section with a blank line. Keep bullets short. Never claim a "
+    "police report has been submitted. Do not invent details."
 )
+
+
+def _missing_evidence_lines(state: CaseState) -> list[str]:
+    """Human-readable 'name - reason' lines for still-needed evidence."""
+    known = set(state.known_evidence_names)
+    lines: list[str] = []
+    for requirement in state.evidence_requirements:
+        if requirement.name in known:
+            continue
+        readable = requirement.name.replace("_", " ")
+        lines.append(f"{readable} - {requirement.reason}")
+    return lines
 
 
 def compose_response(state: CaseState, base_text: str) -> str:
@@ -27,7 +46,7 @@ def compose_response_with_model(
     state: CaseState,
     base_text: str,
 ) -> str:
-    """LLM synthesis: rewrite the gathered data into one natural reply."""
+    """LLM synthesis: rewrite the gathered data into one structured reply."""
     guidance = state.reporting_guidance
     structured_model = model.with_structured_output(SynthesisResult)
     result = structured_model.invoke(
@@ -36,15 +55,20 @@ def compose_response_with_model(
             (
                 "human",
                 "Case so far:\n"
-                f"scam_type={state.scam_type}, location={state.location}, "
-                f"incident_time={state.incident_time}, amount_lost={state.amount_lost}\n"
-                f"known_evidence={state.known_evidence_names}\n"
-                f"missing_items={state.missing_items}\n"
+                f"incident_type={state.scam_type}, location={state.location}, "
+                f"time={state.incident_time}, amount_lost={state.amount_lost}\n"
+                f"already_provided_evidence={state.known_evidence_names}\n"
                 f"next_question={state.next_question}\n"
                 f"reporting_route={guidance.route if guidance else None}\n"
-                f"recommended_actions={guidance.recommended_actions if guidance else []}\n\n"
-                "Draft system-assembled text (rewrite this into one natural "
-                "message, preserving the next question and the guidance):\n"
+                "recommended_actions="
+                f"{guidance.recommended_actions if guidance else []}\n"
+                "evidence_still_needed (name - reason):\n"
+                + (
+                    "\n".join(f"- {line}" for line in _missing_evidence_lines(state))
+                    or "- (none)"
+                )
+                + "\n\nReference draft (use its facts; rewrite into the required "
+                "structured layout, do not copy verbatim):\n"
                 f"{base_text}",
             ),
         ]
