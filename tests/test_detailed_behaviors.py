@@ -263,6 +263,7 @@ class DetailedBehaviorTests(unittest.TestCase):
                 [
                     "Orchestrator",
                     "Submission Packet Agent",
+                    "Synthesis Agent",
                     "Safety Agent",
                 ],
             )
@@ -309,7 +310,7 @@ class DetailedBehaviorTests(unittest.TestCase):
         self.assertNotIn("incident_location", result.case_state.missing_items)
         self.assertIn("incident_time", result.case_state.missing_items)
         self.assertIn("When did this happen?", result.final_text)
-        self.assertIn("Suggested next steps:", result.final_text)
+        self.assertIn("Reporting guidance:", result.final_text)
 
     def test_advice_only_followup_skips_perception_agent(self) -> None:
         orchestrator = SafeTripOrchestrator(use_model=False)
@@ -332,7 +333,7 @@ class DetailedBehaviorTests(unittest.TestCase):
             ],
         )
         self.assertEqual(second.case_state.messages.count("what should i do"), 1)
-        self.assertIn("Suggested next steps:", second.final_text)
+        self.assertIn("Reporting guidance:", second.final_text)
         self.assertIn("Tourist Police 1155", second.final_text)
 
     def test_model_confirmation_is_ignored_without_pending_draft(self) -> None:

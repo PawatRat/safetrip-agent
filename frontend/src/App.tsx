@@ -6,8 +6,12 @@ import {
   CircleDashed,
   ClipboardList,
   FileText,
+  FileUp,
+  ListChecks,
   Minus,
   RefreshCcw,
+  Route,
+  ShieldCheck,
   Sparkles,
   UserRound,
 } from "lucide-react";
@@ -450,17 +454,17 @@ function PipelinePanel({
       {open ? (
         <div className="trace-stack">
           {traces.map((trace, index) => (
-            <div className="trace-row" key={`${trace.agent_name ?? "agent"}-${index}`}>
+            <div className="trace-row" key={`${trace.agent_name ?? "step"}-${index}`}>
               <div className="trace-marker">
-                <Bot className="trace-agent-icon" size={14} strokeWidth={2.3} />
+                <TraceStepIcon stepName={trace.agent_name} />
               </div>
               <div className="trace-content">
                 <div className="trace-heading">
-                  <strong>{trace.agent_name ?? "Agent"}</strong>
+                  <strong>{displayStepName(trace.agent_name)}</strong>
                   <span>{trace.decision ?? "Completed"}</span>
                 </div>
                 <p>{trace.thought ?? "Completed this workflow step."}</p>
-                <code>{formatCollectedData(trace.collected_data)}</code>
+                <TraceDetails data={trace.collected_data} />
               </div>
             </div>
           ))}
@@ -643,25 +647,156 @@ function runtimeLabel(status: StatusPayload | null) {
   return status.live_model_available ? "API Detected" : "API Not Detected";
 }
 
+function displayStepName(stepName?: string) {
+  switch (stepName) {
+    case "Completeness Agent":
+      return "Completeness check";
+    case "Guidance Agent":
+      return "Guidance retrieval";
+    case "Safety Agent":
+      return "Safety check";
+    case "Submission Packet Agent":
+      return "Submission packet";
+    default:
+      return stepName ?? "Workflow step";
+  }
+}
+
+function TraceStepIcon({ stepName }: { stepName?: string }) {
+  const className = isLlmStep(stepName) ? "trace-step-icon llm" : "trace-step-icon rule";
+
+  switch (stepName) {
+    case "Completeness Agent":
+      return <ListChecks className={className} size={14} strokeWidth={2.3} />;
+    case "Guidance Agent":
+      return <Route className={className} size={14} strokeWidth={2.3} />;
+    case "Safety Agent":
+      return <ShieldCheck className={className} size={14} strokeWidth={2.3} />;
+    case "Submission Packet Agent":
+      return <FileUp className={className} size={14} strokeWidth={2.3} />;
+    default:
+      return <Bot className={className} size={14} strokeWidth={2.3} />;
+  }
+}
+
+function isLlmStep(stepName?: string) {
+  return [
+    "Orchestrator",
+    "Perception Agent",
+    "Drafting Agent",
+    "Synthesis Agent",
+  ].includes(stepName ?? "");
+}
+
 function pretty(value?: string | null) {
   return value ? value.replaceAll("_", " ") : "";
 }
 
-function formatCollectedData(data?: Record<string, unknown>) {
-  if (!data || Object.keys(data).length === 0) return "No structured data reported.";
-  return Object.entries(data)
-    .map(([key, value]) => `${pretty(key)}: ${stringifyValue(value)}`)
-    .join(" | ");
+function TraceDetails({ data }: { data?: Record<string, unknown> }) {
+  const lines = formatTraceDetails(data);
+  if (lines.length === 0) {
+    return <p className="trace-detail-empty">No extra details reported.</p>;
+  }
+  return (
+    <dl className="trace-detail-list">
+      {lines.map((line) => (
+        <div className="trace-detail-item" key={`${line.label}-${line.value}`}>
+          <dt>{line.label}</dt>
+          <dd>{line.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
-function stringifyValue(value: unknown): string {
-  if (value === null || value === undefined) return "none";
+function formatTraceDetails(data?: Record<string, unknown>) {
+  if (!data || Object.keys(data).length === 0) return [];
+
+  const lines: Array<{ label: string; value: string }> = [];
+  const used = new Set<string>();
+  const add = (key: string, label: string, value?: unknown) => {
+    if (value === undefined || value === null || value === "" || value === false) return;
+    used.add(key);
+    lines.push({ label, value: formatTraceValue(value) });
+  };
+
+  add("intent", "Route", explainIntent(data.intent));
+  add("carries_case_data", "New case details", data.carries_case_data === true ? "Yes" : "No");
+  add("decided_by", "Uses AI", data.decided_by === "model" ? "Yes" : "No, rule-based");
+  add("workflow_stage", "Case stage", data.workflow_stage);
+  add("has_pending_draft", "Draft waiting for confirmation", data.has_pending_draft === true ? "Yes" : "No");
+
+  add("scam_type", "Case type", data.scam_type);
+  add("classification_confidence", "Confidence", formatConfidence(data.classification_confidence));
+  add("location", "Location", data.location);
+  add("incident_time", "Time", data.incident_time);
+  add("amount_lost", "Amount", data.amount_lost);
+  add("known_evidence", "Evidence found", data.known_evidence);
+
+  add("report_ready", "Ready to draft", data.report_ready === true ? "Yes" : "No");
+  add("missing_items", "Still needed", data.missing_items);
+  add("next_question", "Next question", data.next_question);
+
+  add("mode", "Guidance mode", explainGuidanceMode(data.mode));
+  add("route", "Reporting route", data.route);
+  add("source_ids", "Sources", data.source_ids);
+
+  add("draft_preview", "Draft preview", data.draft_preview);
+  add("preview", "Response preview", data.preview);
+  add("flags", "Safety flags", data.flags);
+  add("notes", "Safety notes", data.notes);
+  add("packet_path", "Packet file", data.packet_path);
+  add("endpoint", "Endpoint", data.endpoint);
+  add("api_error", "API issue", data.api_error);
+
+  for (const [key, value] of Object.entries(data)) {
+    if (used.has(key)) continue;
+    add(key, titleCase(pretty(key)), value);
+  }
+
+  return lines;
+}
+
+function explainIntent(value: unknown) {
+  if (value === "provide_info") return "Collect or update case details";
+  if (value === "confirm_submission") return "Confirm submission";
+  if (value === "ask_advice") return "Answer a guidance question";
+  if (value === "other") return "General support";
+  return value;
+}
+
+function explainGuidanceMode(value: unknown) {
+  if (value === "intake_help") return "Help collect missing details";
+  if (value === "report_route") return "Prepare reporting instructions";
+  return value;
+}
+
+function formatConfidence(value: unknown) {
+  if (typeof value !== "number") return value;
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatTraceValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "None";
   if (Array.isArray(value)) {
-    if (value.length === 0) return "none";
-    return value.map(stringifyValue).join(", ");
+    if (value.length === 0) return "None";
+    return value.map(formatTraceValue).join(", ");
   }
-  if (typeof value === "object") {
-    return JSON.stringify(value);
-  }
-  return String(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "object") return summarizeObject(value);
+  return pretty(String(value));
+}
+
+function summarizeObject(value: object) {
+  const entries = Object.entries(value);
+  if (entries.length === 0) return "None";
+  return entries
+    .slice(0, 4)
+    .map(([key, item]) => `${pretty(key)}: ${formatTraceValue(item)}`)
+    .join(", ");
+}
+
+function titleCase(value: string) {
+  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

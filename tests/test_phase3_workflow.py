@@ -142,7 +142,11 @@ class Phase3WorkflowTests(unittest.TestCase):
         )
 
         self.assertTrue(result.case_state.report_ready)
-        self.assertIn("Case draft for tourist confirmation", result.final_text)
+        self.assertIn("Police-ready report draft", result.final_text)
+        self.assertIn("Statement for police review:", result.final_text)
+        self.assertIn("Reporting guidance:", result.final_text)
+        self.assertNotIn("Recommendation:", result.final_text)
+        self.assertNotIn("Suggested next steps:", result.final_text)
         self.assertIn("Please confirm whether this draft is accurate", result.final_text)
 
     def test_theft_and_physical_assault_can_reach_drafting(self) -> None:
@@ -220,6 +224,14 @@ class Phase3WorkflowTests(unittest.TestCase):
                             )
                         ),
                     ],
+                    SynthesisResult: [
+                        SynthesisResult(
+                            response_text=(
+                                "Your police-ready packet has been prepared and "
+                                "the online handoff was completed."
+                            )
+                        )
+                    ],
                 }
             )
 
@@ -244,7 +256,9 @@ class Phase3WorkflowTests(unittest.TestCase):
                 "awaiting_user_confirmation",
             )
             self.assertIn("Please confirm", draft_result.final_text)
-            self.assertIn("Recommendation:", draft_result.final_text)
+            self.assertIn("Reporting guidance:", draft_result.final_text)
+            self.assertNotIn("Recommendation:", draft_result.final_text)
+            self.assertNotIn("Suggested next steps:", draft_result.final_text)
             self.assertIn("Tourist Police", draft_result.final_text)
             self.assertTrue(draft_result.raw_result["agent_traces"])
 
@@ -288,6 +302,7 @@ class Phase3WorkflowTests(unittest.TestCase):
                 [
                     "Orchestrator",
                     "Submission Packet Agent",
+                    "Synthesis Agent",
                     "Safety Agent",
                 ],
             )
@@ -312,7 +327,8 @@ class Phase3WorkflowTests(unittest.TestCase):
             self.assertEqual(result.case_state.workflow_stage, "submission_packet_written")
             self.assertTrue(Path(result.case_state.submission_packet_path).exists())
             self.assertIn("error", result.case_state.submission_api_response)
-            self.assertIn("packet is saved locally", result.final_text.lower())
+            self.assertIn("prepared and saved locally", result.final_text.lower())
+            self.assertNotIn("RuntimeError", result.final_text)
 
     def test_orchestrator_uses_agent_specific_models(self) -> None:
         agent_models = {

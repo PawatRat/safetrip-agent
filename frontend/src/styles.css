@@ -509,14 +509,21 @@ button {
   margin-top: 1px;
 }
 
-.trace-agent-icon {
+.trace-step-icon {
   width: 18px;
   height: 18px;
   padding: 2px;
   border-radius: 6px;
   background: var(--bg, #ffffff);
-  color: var(--accent);
   box-shadow: 0 0 0 3px var(--bg, #ffffff);
+}
+
+.trace-step-icon.llm {
+  color: var(--accent);
+}
+
+.trace-step-icon.rule {
+  color: #667085;
 }
 
 .trace-content {
@@ -538,7 +545,8 @@ button {
 
 .trace-heading span,
 .trace-content p,
-.trace-content code {
+.trace-detail-empty,
+.trace-detail-list {
   color: var(--muted);
   font-size: 12px;
 }
@@ -553,16 +561,34 @@ button {
   line-height: 1.45;
 }
 
-.trace-content code {
-  display: block;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  line-height: 1.5;
-  white-space: pre-wrap;
+.trace-detail-empty {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.trace-detail-list {
+  display: grid;
+  gap: 4px;
+  margin: 1px 0 0;
+  line-height: 1.45;
+}
+
+.trace-detail-item {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.36fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.trace-detail-item dt {
+  color: #667085;
+  font-weight: 650;
+}
+
+.trace-detail-item dd {
+  margin: 0;
+  color: #4b5563;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .thinking-pulse.live {

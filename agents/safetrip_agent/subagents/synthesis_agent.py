@@ -84,4 +84,68 @@ def compose_response_with_model(
     return result.response_text or base_text
 
 
+def compose_submission_response(
+    state: CaseState,
+    packet_path: str,
+    endpoint_succeeded: bool,
+) -> str:
+    """Offline fallback for the post-confirmation submission result."""
+    if endpoint_succeeded:
+        return (
+            "Your police-ready packet has been prepared and the online handoff "
+            "was completed.\n\n"
+            f"Saved packet: {packet_path}\n\n"
+            "I kept the local packet available so it can be reviewed or shared "
+            "again if needed."
+        )
+    return (
+        "Your police-ready packet has been prepared and saved locally.\n\n"
+        f"Saved packet: {packet_path}\n\n"
+        "The online handoff could not be completed right now, but your case "
+        "details are not lost. You can use the saved packet with Tourist Police "
+        "support or retry the online handoff later."
+    )
+
+
+def compose_submission_response_with_model(
+    model: Any,
+    state: CaseState,
+    packet_path: str,
+    endpoint: str,
+    endpoint_succeeded: bool,
+    error_summary: str | None = None,
+) -> str:
+    """LLM synthesis for the final post-confirmation message."""
+    structured_model = model.with_structured_output(SynthesisResult)
+    result = structured_model.invoke(
+        [
+            (
+                "system",
+                "You are the SafeTrip Synthesis Agent writing the final message "
+                "after the tourist confirmed a police-ready packet. Write a calm, "
+                "plain-language user-facing response. Do not expose raw exception "
+                "names, HTTP codes, stack traces, JSON, or internal endpoint debug "
+                "details. Do not claim police accepted or filed the report unless "
+                "the online handoff succeeded. If the handoff failed, say the "
+                "packet was prepared and saved locally, explain that the online "
+                "handoff could not be completed right now, and give the next safe "
+                "step. Keep it short and reassuring.",
+            ),
+            (
+                "human",
+                "Submission result:\n"
+                f"case_id={state.case_id}\n"
+                f"incident_type={state.scam_type}\n"
+                f"packet_path={packet_path}\n"
+                f"endpoint={endpoint}\n"
+                f"endpoint_succeeded={endpoint_succeeded}\n"
+                f"error_summary={error_summary or 'none'}\n",
+            ),
+        ]
+    )
+    return result.response_text or compose_submission_response(
+        state, packet_path, endpoint_succeeded
+    )
+
+
 SYNTHESIS_AGENT_TOOLS: list = []

@@ -35,6 +35,8 @@ from .subagents.synthesis_agent import (
     SYNTHESIS_AGENT_PROMPT,
     compose_response,
     compose_response_with_model,
+    compose_submission_response,
+    compose_submission_response_with_model,
 )
 from .subagents.submission_packet_agent import (
     DEFAULT_POLICE_SUBMISSION_ENDPOINT,
@@ -406,19 +408,20 @@ class SafeTripOrchestrator:
             "Police submission packet written locally; endpoint submission attempted.",
         )
         if api_error:
-            response_text = (
-                "Police submission packet prepared, but the online handoff endpoint "
-                "returned an error.\n"
-                f"Packet path: {packet_path}\n"
-                f"Endpoint: {self.police_submission_endpoint}\n"
-                f"Error: {api_error}\n"
-                "The packet is saved locally and can still be handed to police or retried."
+            response_text = self._run_submission_synthesis_node(
+                updated,
+                str(packet_path),
+                endpoint_succeeded=False,
+                error_summary=api_error,
+                workflow_steps=workflow_steps,
             )
         else:
-            response_text = (
-                "Police submission packet prepared and sent to SafeTrip mock endpoint.\n"
-                f"Packet path: {packet_path}\n"
-                f"Endpoint: {self.police_submission_endpoint}"
+            response_text = self._run_submission_synthesis_node(
+                updated,
+                str(packet_path),
+                endpoint_succeeded=True,
+                error_summary=None,
+                workflow_steps=workflow_steps,
             )
         self._begin("Safety Agent", workflow_steps)
         updated, response_text = self._run_safety_node(updated, response_text)
@@ -434,6 +437,46 @@ class SafeTripOrchestrator:
         if self.verbose:
             self._print_all_traces()
         return updated, response_text
+
+    def _run_submission_synthesis_node(
+        self,
+        state: CaseState,
+        packet_path: str,
+        endpoint_succeeded: bool,
+        error_summary: str | None,
+        workflow_steps: list[str],
+    ) -> str:
+        self._begin("Synthesis Agent", workflow_steps)
+        model = self._model_for("synthesis")
+        if model:
+            response_text = compose_submission_response_with_model(
+                model,
+                state,
+                packet_path,
+                self.police_submission_endpoint,
+                endpoint_succeeded,
+                error_summary,
+            )
+        else:
+            response_text = compose_submission_response(
+                state,
+                packet_path,
+                endpoint_succeeded,
+            )
+        self._record_trace(
+            "Synthesis Agent",
+            "Turn the packet submission result into a clear tourist-facing update.",
+            {
+                "decided_by": "model" if model else "offline_passthrough",
+                "handoff_completed": endpoint_succeeded,
+                "packet_path": packet_path,
+                "preview": summarize_text(response_text),
+            },
+            "Final submission update composed.",
+        )
+        if self.verbose:
+            self._print_latest_trace("Synthesis Agent")
+        return response_text
 
     def _record_trace(
         self,
@@ -491,9 +534,9 @@ def attach_guidance_to_response(response_text: str, state: CaseState) -> str:
         return response_text
 
     parts = [response_text.rstrip()]
+    guidance_lines: list[str] = []
     if state.reporting_guidance.route and state.reporting_guidance.route not in response_text:
-        parts.append("\nRecommendation:")
-        parts.append(state.reporting_guidance.route)
+        guidance_lines.append(state.reporting_guidance.route)
 
     actions = [
         action
@@ -501,8 +544,11 @@ def attach_guidance_to_response(response_text: str, state: CaseState) -> str:
         if action not in response_text
     ]
     if actions:
-        parts.append("\nSuggested next steps:")
-        parts.extend(f"- {action}" for action in actions)
+        guidance_lines.extend(f"- {action}" for action in actions)
+
+    if guidance_lines and "Reporting guidance:" not in response_text:
+        parts.append("\nReporting guidance:")
+        parts.extend(guidance_lines)
 
     source_labels = [
         source.get("title") or source.get("id")
