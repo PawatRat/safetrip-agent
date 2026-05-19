@@ -96,10 +96,13 @@ def plan_turn_with_model(model: Any, state: CaseState, message: str) -> Orchestr
                 "system",
                 ORCHESTRATOR_AGENT_PROMPT
                 + " carries_case_data must be true if the message contains any new "
-                "fact, any new or described evidence, or a correction. Set it false "
-                "only for pure intent messages (asking for advice, confirming, "
-                "thanking, or a question with no new details). When unsure, prefer "
-                "carries_case_data=true.",
+                "fact, any new or described evidence, or a correction. CRITICAL: if "
+                "a question was asked last turn and this message plausibly answers "
+                "it, or supplies ANY of the still-missing items (even a bare value "
+                "like a number, place, or time), set carries_case_data=true. Set it "
+                "false only for pure intent messages (asking for advice, confirming, "
+                "thanking, or a question that gives no new details). When unsure, "
+                "prefer carries_case_data=true.",
             ),
             (
                 "human",
@@ -110,6 +113,8 @@ def plan_turn_with_model(model: Any, state: CaseState, message: str) -> Orchestr
                 f"report_ready={state.report_ready}, "
                 f"workflow_stage={state.workflow_stage}, "
                 f"has_pending_draft={_has_pending_draft(state)}\n\n"
+                f"Still missing: {state.missing_items}\n"
+                f"Question asked to the tourist last turn: {state.next_question}\n\n"
                 f"Latest tourist message:\n{message}",
             ),
         ]

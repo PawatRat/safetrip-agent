@@ -76,6 +76,13 @@ def update_case_perception_with_model(
     updated = state.model_copy(deep=True)
     transcript = "\n".join(f"Tourist: {item}" for item in updated.messages)
 
+    needed = [
+        f"- {requirement.name}: {requirement.reason}"
+        for requirement in updated.evidence_requirements
+        if requirement.name not in set(updated.known_evidence_names)
+    ]
+    needed_block = "\n".join(needed) or "- (not yet known - classify first)"
+
     structured_model = model.with_structured_output(PerceptionExtraction)
     extraction = structured_model.invoke(
         [
@@ -83,7 +90,16 @@ def update_case_perception_with_model(
                 "system",
                 PERCEPTION_AGENT_PROMPT
                 + " Return strict structured output. Preserve the tourist's own "
-                "wording for location and time.",
+                "wording for location and time. IMPORTANT: if the tourist's "
+                "message provides or clearly describes any required evidence item "
+                "below, put that item's EXACT name in evidence_names - even when "
+                "they use natural language and never name it. For example: stating "
+                "the fare asked for and the fare paid satisfies "
+                "'fare_requested_and_paid'; describing where the ride started and "
+                "ended satisfies 'pickup_and_dropoff'; a plate or taxi number "
+                "satisfies 'vehicle_plate_or_taxi_id'. Only use names from the "
+                "list. This runs every turn - capture what THIS message adds; do "
+                "not drop already-known facts.",
             ),
             (
                 "human",
@@ -91,6 +107,11 @@ def update_case_perception_with_model(
                 f"scam_type={updated.scam_type}, location={updated.location}, "
                 f"incident_time={updated.incident_time}, amount_lost={updated.amount_lost}, "
                 f"known_evidence={updated.known_evidence_names}\n\n"
+                f"Still missing: {updated.missing_items}\n"
+                f"Question the tourist is answering now: {updated.next_question}\n\n"
+                "Required evidence items still needed (use these exact names in "
+                "evidence_names when satisfied):\n"
+                f"{needed_block}\n\n"
                 "Conversation so far:\n"
                 f"{transcript}\n\n"
                 f"Latest tourist message:\n{message}",
