@@ -48,6 +48,131 @@ for the no-key path.
 .venv/bin/python -m pytest tests/ -q
 ```
 
+## Deploy to Azure Container Apps
+
+The production deployment keeps the same one-service shape: one container serves
+the built React UI and the `/api/*` backend on port `8765`.
+
+### One-time Azure setup
+
+Create the Azure resources. This subscription already has one Container Apps
+environment in Southeast Asia, so the production app reuses that environment.
+
+```bash
+RG=rg-safetrip-ai-prod
+LOCATION=southeastasia
+ACR_NAME=acrsafetripaiprod
+ENV_ID=/subscriptions/30d29718-2aba-4e7f-b052-078c15a6b42d/resourceGroups/rg-us01-poc/providers/Microsoft.App/managedEnvironments/us01-compliance-service-env
+APP_NAME=ca-safetrip-ai-prod
+IMAGE_NAME=safetrip-ai
+
+az group create --name "$RG" --location "$LOCATION"
+az acr create --resource-group "$RG" --name "$ACR_NAME" --sku Basic
+ACR_LOGIN_SERVER=$(az acr show --name "$ACR_NAME" --query loginServer -o tsv)
+
+az containerapp create \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --environment "$ENV_ID" \
+  --image "mcr.microsoft.com/k8se/quickstart:latest" \
+  --target-port 80 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 1
+
+az containerapp identity assign --name "$APP_NAME" --resource-group "$RG" --system-assigned
+PRINCIPAL_ID=$(az containerapp identity show --name "$APP_NAME" --resource-group "$RG" --query principalId -o tsv)
+ACR_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv)
+az role assignment create --assignee "$PRINCIPAL_ID" --role AcrPull --scope "$ACR_ID"
+
+az containerapp registry set \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --server "$ACR_LOGIN_SERVER" \
+  --identity system
+
+az containerapp ingress update \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --target-port 8765
+
+az containerapp secret set \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --secrets gemini-api-key="<your-gemini-api-key>"
+
+az containerapp update \
+  --name "$APP_NAME" \
+  --resource-group "$RG" \
+  --set-env-vars \
+    SAFETRIP_MODEL_PROVIDER=gemini \
+    GEMINI_API_KEY=secretref:gemini-api-key \
+    SAFETRIP_ORCHESTRATOR_MODEL=gemini-2.5-flash \
+    SAFETRIP_PERCEPTION_MODEL=gemini-2.5-flash \
+    SAFETRIP_DRAFTING_MODEL=gemini-2.5-pro \
+    SAFETRIP_SYNTHESIS_MODEL=gemini-2.5-flash \
+    SAFETRIP_SAFETY_MODEL=gemini-2.5-pro
+```
+
+The app intentionally uses `--max-replicas 1` because chat session state is
+currently in memory inside the Python process. The first real SafeTrip image is
+built and deployed by GitHub Actions after the secrets below are configured.
+
+### GitHub Actions setup
+
+Create an Entra application for GitHub OIDC and scope it to the resource group:
+
+```bash
+APP_ID=$(az ad app create --display-name safetrip-ai-github --query appId -o tsv)
+az ad sp create --id "$APP_ID"
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+TENANT_ID=$(az account show --query tenantId -o tsv)
+ACR_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv)
+
+az role assignment create \
+  --assignee "$APP_ID" \
+  --role Contributor \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG"
+
+az role assignment create \
+  --assignee "$APP_ID" \
+  --role AcrPush \
+  --scope "$ACR_ID"
+
+az ad app federated-credential create \
+  --id "$APP_ID" \
+  --parameters '{
+    "name": "github-main",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subject": "repo:PawatRat/safetrip-agent:ref:refs/heads/main",
+    "audiences": ["api://AzureADTokenExchange"]
+  }'
+```
+
+Set these GitHub repository secrets:
+
+```text
+AZURE_CLIENT_ID=$APP_ID
+AZURE_TENANT_ID=$TENANT_ID
+AZURE_SUBSCRIPTION_ID=$SUBSCRIPTION_ID
+```
+
+After this, every push to `main` runs tests, builds the frontend, builds and
+pushes the Docker image to ACR, and updates the Container App.
+
+### Validate deployment
+
+```bash
+FQDN=$(az containerapp show \
+  --name ca-safetrip-ai-prod \
+  --resource-group rg-safetrip-ai-prod \
+  --query properties.configuration.ingress.fqdn \
+  -o tsv)
+
+curl "https://$FQDN/api/health"
+curl "https://$FQDN/api/status"
+```
+
 ## Architecture
 
 A single LLM **Orchestrator** is the router. Workers are deterministic unless

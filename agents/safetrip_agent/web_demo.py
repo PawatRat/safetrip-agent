@@ -42,6 +42,9 @@ class SafeTripDemoHandler(BaseHTTPRequestHandler):
     server_version = "SafeTripDemo/0.1"
 
     def do_GET(self) -> None:
+        if self.path == "/api/health":
+            self._handle_health()
+            return
         if self.path == "/api/status":
             self._handle_status()
             return
@@ -151,6 +154,9 @@ class SafeTripDemoHandler(BaseHTTPRequestHandler):
                 "model_hint": model_status_hint(provider, live_available),
             }
         )
+
+    def _handle_health(self) -> None:
+        self._send_json({"ok": True})
 
     def _handle_reset(self) -> None:
         payload = self._read_json()

@@ -1,0 +1,17 @@
+.git
+.github
+.claude
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.DS_Store
+.env
+.env.*
+agents/safetrip_ai.egg-info
+police_submission_packets
+frontend/node_modules
+frontend/dist
+frontend/tsconfig.tsbuildinfo
