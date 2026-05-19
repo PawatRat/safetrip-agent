@@ -24,8 +24,9 @@ cd frontend && npm install && npm run build && cd ..
 
 Open **http://127.0.0.1:8765**.
 
-- **Live mode** (default): needs `GEMINI_API_KEY` in `.env`. The orchestrator
-  and workers use Gemini.
+- **Live mode** (default): needs live model credentials in `.env`. Gemini is the
+  default provider, and Azure AI Foundry can be selected with
+  `SAFETRIP_MODEL_PROVIDER=azure`.
 - **Offline mode**: add `--offline` to use the deterministic fallback with no
   API key (used by the tests).
 
@@ -114,9 +115,14 @@ az containerapp update \
 Each agent runs at one of two **intelligence tiers** (low or high) — see
 `AGENT_TIERS` in [model_provider.py](agents/safetrip_agent/model_provider.py).
 The tier maps to a concrete model per provider, so swapping providers preserves
-the high/low split (Gemini Flash↔Pro ≈ `gpt-5-mini`↔`gpt-5`).
+the high/low split (Gemini Flash↔Pro ≈ `gpt-5-mini`↔`gpt-5`). Azure GPT-5
+reasoning effort is configured separately: low-tier agents default to `low`,
+and high-tier agents default to `medium`.
 
-Create two deployments in Foundry (default names: `gpt-5-mini`, `gpt-5`), then:
+Create two deployments in Foundry. The model IDs are `gpt-5-mini` and `gpt-5`;
+the deployment names can match those model IDs, or you can use your own names
+and set `SAFETRIP_AZURE_LOW_DEPLOYMENT` / `SAFETRIP_AZURE_HIGH_DEPLOYMENT`.
+Then:
 
 ```bash
 az containerapp secret set \
@@ -131,11 +137,15 @@ az containerapp update \
     AZURE_OPENAI_API_VERSION=2024-10-21 \
     SAFETRIP_AZURE_LOW_DEPLOYMENT=gpt-5-mini \
     SAFETRIP_AZURE_HIGH_DEPLOYMENT=gpt-5 \
+    SAFETRIP_AZURE_LOW_REASONING_EFFORT=low \
+    SAFETRIP_AZURE_HIGH_REASONING_EFFORT=medium \
     AZURE_OPENAI_API_KEY=secretref:azure-openai-key
 ```
 
 Per-agent overrides (`SAFETRIP_DRAFTING_MODEL=<deployment-name>`) still win,
 so you can A/B a single agent on a different deployment without touching code.
+Per-agent reasoning overrides are also supported, for example
+`SAFETRIP_DRAFTING_REASONING_EFFORT=high`.
 
 The app intentionally uses `--max-replicas 1` because chat session state is
 currently in memory inside the Python process. The first real SafeTrip image is

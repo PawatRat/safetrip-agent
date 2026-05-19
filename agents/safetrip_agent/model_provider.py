@@ -18,6 +18,12 @@ AGENT_TIERS: dict[str, str] = {
 }
 
 
+AZURE_REASONING_EFFORT_DEFAULTS: dict[str, str] = {
+    "low": "low",
+    "high": "medium",
+}
+
+
 def _provider() -> str:
     return os.getenv("SAFETRIP_MODEL_PROVIDER", "gemini").lower()
 
@@ -54,7 +60,21 @@ def resolve_agent_model_name(agent_name: str) -> str:
     return _tier_models()[tier]
 
 
-def build_model(model_name: str | None = None):
+def resolve_agent_reasoning_effort(agent_name: str) -> str | None:
+    if _provider() != "azure":
+        return None
+    env_name = f"SAFETRIP_{agent_name.upper()}_REASONING_EFFORT"
+    override = os.getenv(env_name)
+    if override:
+        return override
+    tier = AGENT_TIERS[agent_name]
+    return os.getenv(
+        f"SAFETRIP_AZURE_{tier.upper()}_REASONING_EFFORT",
+        AZURE_REASONING_EFFORT_DEFAULTS[tier],
+    )
+
+
+def build_model(model_name: str | None = None, reasoning_effort: str | None = None):
     provider = _provider()
     resolved = model_name or os.getenv("SAFETRIP_MODEL")
 
@@ -85,7 +105,7 @@ def build_model(model_name: str | None = None):
             azure_endpoint=endpoint,
             api_key=api_key,
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-            temperature=0.1,
+            reasoning_effort=reasoning_effort,
         )
 
     if provider == "openai":
@@ -106,6 +126,9 @@ def build_model(model_name: str | None = None):
 def build_agent_models() -> dict[str, object]:
     """Build per-agent chat models using tier defaults plus environment overrides."""
     return {
-        agent_name: build_model(resolve_agent_model_name(agent_name))
+        agent_name: build_model(
+            resolve_agent_model_name(agent_name),
+            reasoning_effort=resolve_agent_reasoning_effort(agent_name),
+        )
         for agent_name in AGENT_TIERS
     }

@@ -13,7 +13,11 @@ sys.path.insert(0, str(ROOT / "agents"))
 
 from safetrip_agent.model_provider import DEFAULT_AGENT_MODELS, resolve_agent_model_name
 from safetrip_agent.orchestrator import SafeTripOrchestrator
-from safetrip_agent.web_demo import result_to_payload
+from safetrip_agent.web_demo import (
+    has_live_model_credentials,
+    model_status_hint,
+    result_to_payload,
+)
 from safetrip_agent.legal_knowledge_base import build_guidance_from_knowledge
 from safetrip_agent.schemas import (
     CaseState,
@@ -395,6 +399,21 @@ class DetailedBehaviorTests(unittest.TestCase):
             updated.known_evidence_names,
             ["payment_record", "seller_chat_or_email"],
         )
+
+    def test_web_status_supports_azure_credentials(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
+                "AZURE_OPENAI_API_KEY": "test-key",
+            },
+            clear=False,
+        ):
+            self.assertTrue(has_live_model_credentials("azure"))
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(has_live_model_credentials("azure"))
+            self.assertIn("AZURE_OPENAI_ENDPOINT", model_status_hint("azure", False))
 
     def test_orchestrator_appends_latest_message_once(self) -> None:
         orchestrator = SafeTripOrchestrator(use_model=False)

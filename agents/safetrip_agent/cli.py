@@ -77,7 +77,11 @@ def format_runtime_error(exc: Exception) -> str:
             "Gemini rejected the API key. Create a valid Google AI Studio key, "
             "put it in .env as GEMINI_API_KEY=..., and run again."
         )
-    if "Missing GEMINI_API_KEY" in message or "Missing OPENAI_API_KEY" in message:
+    if (
+        "Missing GEMINI_API_KEY" in message
+        or "Missing AZURE_OPENAI_ENDPOINT" in message
+        or "Missing OPENAI_API_KEY" in message
+    ):
         return message
     if "Unsupported SAFETRIP_MODEL_PROVIDER" in message:
         return message

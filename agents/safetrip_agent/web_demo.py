@@ -232,6 +232,8 @@ def result_to_payload(result) -> dict:
 def has_live_model_credentials(provider: str) -> bool:
     if provider == "gemini":
         return bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+    if provider == "azure":
+        return bool(os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_API_KEY"))
     if provider == "openai":
         return bool(os.getenv("OPENAI_API_KEY"))
     return False
@@ -242,15 +244,18 @@ def model_status_hint(provider: str, live_available: bool) -> str:
         return "Live model credentials are configured."
     if provider == "gemini":
         return "Missing GEMINI_API_KEY or GOOGLE_API_KEY. Add it to .env for live LLM mode."
+    if provider == "azure":
+        return "Missing AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY. Add them to .env for live LLM mode."
     if provider == "openai":
         return "Missing OPENAI_API_KEY. Add it to .env for live LLM mode."
-    return "Unsupported SAFETRIP_MODEL_PROVIDER. Use gemini or openai."
+    return "Unsupported SAFETRIP_MODEL_PROVIDER. Use gemini, azure, or openai."
 
 
 def is_model_configuration_error(exc: Exception) -> bool:
     message = str(exc)
     return (
         "Missing GEMINI_API_KEY" in message
+        or "Missing AZURE_OPENAI_ENDPOINT" in message
         or "Missing OPENAI_API_KEY" in message
         or "Unsupported SAFETRIP_MODEL_PROVIDER" in message
         or "API key not valid" in message
@@ -262,7 +267,11 @@ def format_runtime_hint(exc: Exception) -> str:
     message = str(exc)
     if "API_KEY_INVALID" in message or "API key not valid" in message:
         return "Gemini rejected the API key. Update GEMINI_API_KEY in .env or switch to offline mode."
-    if "Missing GEMINI_API_KEY" in message or "Missing OPENAI_API_KEY" in message:
+    if (
+        "Missing GEMINI_API_KEY" in message
+        or "Missing AZURE_OPENAI_ENDPOINT" in message
+        or "Missing OPENAI_API_KEY" in message
+    ):
         return f"{message} Switch to offline mode for deterministic demo fallback."
     if "Unsupported SAFETRIP_MODEL_PROVIDER" in message:
         return message
