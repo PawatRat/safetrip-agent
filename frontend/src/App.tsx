@@ -454,19 +454,7 @@ function PipelinePanel({
       {open ? (
         <div className="trace-stack">
           {traces.map((trace, index) => (
-            <div className="trace-row" key={`${trace.agent_name ?? "step"}-${index}`}>
-              <div className="trace-marker">
-                <TraceStepIcon stepName={trace.agent_name} />
-              </div>
-              <div className="trace-content">
-                <div className="trace-heading">
-                  <strong>{displayStepName(trace.agent_name)}</strong>
-                  <span>{trace.decision ?? "Completed"}</span>
-                </div>
-                <p>{trace.thought ?? "Completed this workflow step."}</p>
-                <TraceDetails data={trace.collected_data} />
-              </div>
-            </div>
+            <TraceRow trace={trace} index={index} key={`${trace.agent_name ?? "step"}-${index}`} />
           ))}
           {liveAgent ? (
             <div className="trace-row active" key="live-agent">
@@ -483,6 +471,41 @@ function PipelinePanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function TraceRow({ trace, index }: { trace: AgentTrace; index: number }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = `trace-details-${index}-${trace.agent_name ?? "step"}`;
+
+  return (
+    <div className="trace-row">
+      <div className="trace-marker">
+        <TraceStepIcon stepName={trace.agent_name} />
+      </div>
+      <div className="trace-content">
+        <div className="trace-heading">
+          <strong>{displayStepName(trace.agent_name)}</strong>
+          <span>{trace.decision ?? "Completed"}</span>
+        </div>
+        <p>{trace.thought ?? "Completed this workflow step."}</p>
+        <button
+          aria-controls={detailsId}
+          aria-expanded={detailsOpen}
+          className="trace-detail-toggle"
+          type="button"
+          onClick={() => setDetailsOpen((value) => !value)}
+        >
+          Details
+          <ChevronDown className={detailsOpen ? "rotated" : ""} size={14} />
+        </button>
+        {detailsOpen ? (
+          <div id={detailsId}>
+            <TraceDetails data={trace.collected_data} />
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -564,14 +587,12 @@ function EvidenceChecklist({ caseState }: { caseState?: CaseState }) {
               <li className="checklist-item" key={`${req.name ?? "req"}-${index}`}>
                 <StatusMark collected={have} />
                 <div className="checklist-body">
-                  <div className="checklist-head">
-                    <span className="checklist-level">
-                      {pretty(req.required_level) || "optional"}
-                    </span>
-                    <strong className={have ? "" : "muted"}>
-                      {pretty(req.name) || "Evidence item"}
-                    </strong>
-                  </div>
+                  <span className="checklist-level">
+                    {pretty(req.required_level) || "optional"}
+                  </span>
+                  <strong className={have ? "" : "muted"}>
+                    {pretty(req.name) || "Evidence item"}
+                  </strong>
                   {req.reason ? <p>{req.reason}</p> : null}
                 </div>
               </li>
@@ -586,7 +607,8 @@ function EvidenceChecklist({ caseState }: { caseState?: CaseState }) {
 function StatusMark({ collected }: { collected: boolean }) {
   return (
     <span className={collected ? "status-mark on" : "status-mark"}>
-      {collected ? <Check size={13} strokeWidth={2.5} /> : <Minus size={13} />}
+      <Minus className="status-icon status-minus" size={13} />
+      <Check className="status-icon status-check" size={13} strokeWidth={2.5} />
     </span>
   );
 }
