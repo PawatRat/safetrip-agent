@@ -106,13 +106,36 @@ az containerapp update \
   --resource-group "$RG" \
   --set-env-vars \
     SAFETRIP_MODEL_PROVIDER=gemini \
-    GEMINI_API_KEY=secretref:gemini-api-key \
-    SAFETRIP_ORCHESTRATOR_MODEL=gemini-2.5-flash \
-    SAFETRIP_PERCEPTION_MODEL=gemini-2.5-flash \
-    SAFETRIP_DRAFTING_MODEL=gemini-2.5-pro \
-    SAFETRIP_SYNTHESIS_MODEL=gemini-2.5-flash \
-    SAFETRIP_SAFETY_MODEL=gemini-2.5-pro
+    GEMINI_API_KEY=secretref:gemini-api-key
 ```
+
+### Switching to Azure AI Foundry (Azure OpenAI)
+
+Each agent runs at one of two **intelligence tiers** (low or high) — see
+`AGENT_TIERS` in [model_provider.py](agents/safetrip_agent/model_provider.py).
+The tier maps to a concrete model per provider, so swapping providers preserves
+the high/low split (Gemini Flash↔Pro ≈ `gpt-5-mini`↔`gpt-5`).
+
+Create two deployments in Foundry (default names: `gpt-5-mini`, `gpt-5`), then:
+
+```bash
+az containerapp secret set \
+  --name "$APP_NAME" --resource-group "$RG" \
+  --secrets azure-openai-key="<your-azure-openai-key>"
+
+az containerapp update \
+  --name "$APP_NAME" --resource-group "$RG" \
+  --set-env-vars \
+    SAFETRIP_MODEL_PROVIDER=azure \
+    AZURE_OPENAI_ENDPOINT=https://<your-foundry>.openai.azure.com/ \
+    AZURE_OPENAI_API_VERSION=2024-10-21 \
+    SAFETRIP_AZURE_LOW_DEPLOYMENT=gpt-5-mini \
+    SAFETRIP_AZURE_HIGH_DEPLOYMENT=gpt-5 \
+    AZURE_OPENAI_API_KEY=secretref:azure-openai-key
+```
+
+Per-agent overrides (`SAFETRIP_DRAFTING_MODEL=<deployment-name>`) still win,
+so you can A/B a single agent on a different deployment without touching code.
 
 The app intentionally uses `--max-replicas 1` because chat session state is
 currently in memory inside the Python process. The first real SafeTrip image is

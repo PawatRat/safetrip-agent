@@ -74,10 +74,20 @@ Each step emits an `agent_start` + `trace` event (SSE) → the UI pipeline panel
 
 ## Models
 
-`model_provider.DEFAULT_AGENT_MODELS` maps agent → Gemini model. Override per
-agent with env vars like `SAFETRIP_ORCHESTRATOR_MODEL`. `_model_for(name)` in
-the orchestrator resolves `agent_models` → `self.model`; if `None`, the
-deterministic path runs.
+Each agent has an intelligence **tier** (`low` or `high`) in
+`model_provider.AGENT_TIERS`. Tiers resolve to a concrete model per provider
+(`SAFETRIP_MODEL_PROVIDER` = `gemini` | `azure` | `openai`). Per-agent overrides
+(`SAFETRIP_<AGENT>_MODEL`) still win for that agent.
+
+- gemini: low=`gemini-2.5-flash`, high=`gemini-2.5-pro`
+- azure (Azure OpenAI / Foundry): low=`SAFETRIP_AZURE_LOW_DEPLOYMENT`
+  (default `gpt-5-mini`), high=`SAFETRIP_AZURE_HIGH_DEPLOYMENT` (default
+  `gpt-5`). Also requires `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`,
+  `AZURE_OPENAI_API_VERSION`.
+- openai: low=`gpt-4o-mini`, high=`gpt-4o`.
+
+`_model_for(name)` in the orchestrator resolves `agent_models` → `self.model`;
+if `None`, the deterministic path runs.
 
 ## Git workflow
 
